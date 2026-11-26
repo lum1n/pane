@@ -24,6 +24,7 @@ pub mod reducer;
 pub mod rules;
 pub mod snapshot;
 pub mod state;
+pub mod stream;
 pub mod tree;
 pub mod worker;
 pub mod workspace;

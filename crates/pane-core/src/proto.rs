@@ -9,6 +9,7 @@ use crate::config::ScratchpadConfig;
 use crate::geometry::{Direction, Orientation, Rect};
 use crate::gesture::GesturePhase;
 use crate::profile::{Profile, ProfileEdit};
+use crate::stream::EventKind;
 use crate::workspace::Cycle;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -150,6 +151,13 @@ pub enum Command {
     Gesture {
         phase: GesturePhase,
     },
+    /// Stream events (`stream::StreamEvent`) as JSON lines after the
+    /// `{"status":"ok"}` reply. Only works over the control socket. An empty
+    /// list means every kind except `snapshot`.
+    Subscribe {
+        #[serde(default)]
+        events: Vec<EventKind>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +272,14 @@ impl Command {
                     here,
                 }
             }
+            "subscribe" => Command::Subscribe {
+                events: parts[1..]
+                    .iter()
+                    .map(|k| {
+                        EventKind::parse(k).ok_or_else(|| format!("`{s}`: unknown event `{k}`"))
+                    })
+                    .collect::<Result<_, _>>()?,
+            },
             other => return Err(format!("unknown command `{other}`")),
         };
         Ok(cmd)
@@ -278,6 +294,7 @@ impl Command {
                 | Command::ProfileList
                 | Command::ProfileLoad { .. }
                 | Command::Search { .. }
+                | Command::Subscribe { .. }
         )
     }
 }
@@ -435,6 +452,20 @@ mod tests {
         );
         assert!(Command::parse("profile-when here").is_err());
         assert!(Command::parse("profile-when always work").is_err());
+        assert_eq!(
+            Command::parse("subscribe").unwrap(),
+            Command::Subscribe { events: vec![] }
+        );
+        assert_eq!(
+            Command::parse("subscribe focus workspace-shown").unwrap(),
+            Command::Subscribe {
+                events: vec![EventKind::Focus, EventKind::WorkspaceShown]
+            }
+        );
+        assert!(Command::parse("subscribe nonsense").is_err());
+        let r: Command = serde_json::from_str(r#"{"cmd":"subscribe"}"#).unwrap();
+        assert_eq!(r, Command::Subscribe { events: vec![] });
+        assert!(r.is_query());
         assert_eq!(
             serde_json::to_string(&Reply::ok()).unwrap(),
             r#"{"status":"ok"}"#

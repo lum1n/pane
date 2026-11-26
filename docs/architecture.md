@@ -36,6 +36,8 @@ The boundary is a C ABI with JSON payloads (`crates/pane-ffi/include/pane.h`). T
    Snapshot -> Swift icon (on change, ≤ 20 Hz)   UiRequest -> Swift   Reply -> waiting client
 ```
 
+`pane subscribe` hangs off the snapshot path. Each socket client that subscribes registers a bounded channel (256 lines) with the core. Whenever a snapshot is due, the core diffs it against the last one that client saw (`stream::diff`) and `try_send`s the resulting event lines; a client that is gone or full is dropped, so a slow reader never holds up the core. Snapshots are built for subscribers even when there is no Swift sink (headless `pane-agentd`). Control connections set `SO_NOSIGPIPE`, since inside the app nothing ignores SIGPIPE and a write to a closed subscriber would otherwise kill Pane.
+
 Gestures take the same path: a listen-only tap on the hotkey thread watches the pointer and modifier keys, `gesture::GestureTracker` turns them into `Command::Gesture` phases, and the core answers with `UiRequest::GestureOverlay` (the frame the window will get, from `drop::preview`) for Swift to draw.
 
 The core thread never touches AX. A hung app blocks only its own worker. The core marks an app unresponsive after 2 s without a reply and leaves its windows alone until the app emits an event again.

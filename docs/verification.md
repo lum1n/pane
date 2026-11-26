@@ -80,3 +80,14 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Settings → Scratchpads: Add Scratchpad, pick a running app, set a key and size, Save; `config.toml` gets a `[[scratchpad]]` (comments elsewhere intact) and the key works at once. Remove it and Save: the table is gone and the window is let go.
 - [ ] A bad size (`big`) shows the config error in the tab and leaves `config.toml` unchanged.
 - [ ] `pane do "summon Safari"` from another workspace moves a Safari window next to the focused tile without switching workspace; with Safari not running it opens.
+
+## Event stream
+- [ ] `pane subscribe | jq -c .` in a terminal: prints `displays`, one `workspace-shown` per display, `workspaces`, `focus` and `profile` at once.
+- [ ] Switch workspace with a hotkey: a `workspace-shown` with the new `workspace` and `previous`, then `workspaces` and `focus`.
+- [ ] Click into another window, and on another display: a `focus` with its `app`, `title`, `display` and `workspace`. Switching to an empty workspace gives `"window": null`.
+- [ ] Change a focused Safari tab: a `focus` with the new `title`.
+- [ ] Unplug a display: `displays` without it and `workspaces` with its workspaces as guests. Plug it back in: `displays` and its `workspace-shown`.
+- [ ] Apply a profile from the menu: `profile` with its name.
+- [ ] `pane subscribe focus --snapshot` prints only `focus` and `snapshot` lines.
+- [ ] Ctrl-C the subscriber, then switch workspaces: Pane keeps working (no crash from SIGPIPE).
+- [ ] Quit Pane: the subscriber exits with status 0.

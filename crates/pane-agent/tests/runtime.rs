@@ -482,3 +482,88 @@ fn profiles_follow_the_displays() {
     assert!(h.shutdown(Duration::from_secs(3)));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn subscribe_streams_events() {
+    let dir = temp_dir("subscribe");
+    let mut opts = Options::new(Paths::new(&dir));
+    opts.hotkeys = false;
+    opts.app_poll = Duration::from_millis(50);
+    // No on_snapshot sink, like headless pane-agentd.
+    let h = runtime::start(Arc::new(Fake::new(Arc::default())), opts).unwrap();
+    wait_until(|| {
+        pane_agent::control::request(
+            &dir.join("pane.sock"),
+            &Command::Ping,
+            Duration::from_secs(1),
+        )
+        .is_ok()
+    });
+
+    let lines = pane_agent::control::subscribe(&dir.join("pane.sock"), vec![]).unwrap();
+    let (tx, rx) = crossbeam_channel::unbounded::<serde_json::Value>();
+    let reader = std::thread::spawn(move || {
+        for line in lines {
+            let v = serde_json::from_str(&line.unwrap()).unwrap();
+            if tx.send(v).is_err() {
+                break; // dropping `lines` closes the connection
+            }
+        }
+    });
+    let next_until = |pred: &dyn Fn(&serde_json::Value) -> bool| {
+        let t = Instant::now();
+        loop {
+            let left = Duration::from_secs(5).saturating_sub(t.elapsed());
+            let v = rx.recv_timeout(left).expect("timed out waiting for event");
+            if pred(&v) {
+                return v;
+            }
+        }
+    };
+
+    // The current state first, one event of each default kind.
+    let mut seen = Vec::new();
+    while seen.len() < 5 {
+        let v = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        seen.push(v["event"].as_str().unwrap().to_string());
+    }
+    assert_eq!(
+        seen,
+        [
+            "displays",
+            "workspace-shown",
+            "workspaces",
+            "focus",
+            "profile"
+        ]
+    );
+
+    let r = h.command(
+        Command::Workspace { name: "2".into() },
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
+    let v = next_until(&|v| v["event"] == "workspace-shown");
+    assert_eq!(v["workspace"], "2");
+    assert_eq!(v["display"], "C");
+    assert_eq!(v["display_name"], "Fake C");
+
+    // A client that leaves is dropped; the core carries on.
+    drop(rx);
+    let r = h.command(
+        Command::Workspace { name: "1".into() },
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
+    reader.join().unwrap();
+    let r = h.command(Command::Ping, Duration::from_secs(2));
+    assert_eq!(r, Reply::data(&"pong"));
+
+    // Not through the in-process command path.
+    let r = h.command(
+        Command::Subscribe { events: vec![] },
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Error { .. }), "{r:?}");
+    h.shutdown(Duration::from_secs(2));
+}

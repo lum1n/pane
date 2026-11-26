@@ -1,11 +1,13 @@
 //! `pane`: talk to the running Pane over its socket.
 
+use std::io::Write;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use pane_agent::paths::Paths;
 use pane_core::proto::{Command, QueryKind, Reply};
+use pane_core::stream::EventKind;
 
 #[derive(Parser)]
 #[command(name = "pane", version, about = "Control the Pane window manager")]
@@ -51,6 +53,16 @@ enum Cmd {
     Do { command: Vec<String> },
     /// Check that Pane is running.
     Ping,
+    /// Print events as JSON lines as they happen, starting with the current
+    /// state: `pane subscribe workspace-shown focus`. No kinds = all but
+    /// snapshot. Exits when Pane quits.
+    Subscribe {
+        #[arg(value_parser = ["focus", "workspace-shown", "workspaces", "displays", "profile", "snapshot"])]
+        kinds: Vec<String>,
+        /// Also send the whole snapshot whenever it changes.
+        #[arg(long)]
+        snapshot: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -63,6 +75,10 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Streams instead of one reply.
+    if let Command::Subscribe { events } = cmd {
+        return subscribe(&paths, events);
+    }
     let cmd = match (cmd, &cli.cmd) {
         (Command::ProfileCapture { name }, _) => {
             // Capture, then save under the given name.
@@ -137,7 +153,42 @@ fn build(c: &Cmd) -> Result<Command, String> {
         },
         Cmd::Do { command } => Command::parse(&command.join(" "))?,
         Cmd::Ping => Command::Ping,
+        Cmd::Subscribe { kinds, snapshot } => {
+            let mut events: Vec<EventKind> =
+                kinds.iter().filter_map(|k| EventKind::parse(k)).collect();
+            if *snapshot {
+                if events.is_empty() {
+                    // The default set, plus the snapshot.
+                    events = EventKind::ALL.to_vec();
+                } else if !events.contains(&EventKind::Snapshot) {
+                    events.push(EventKind::Snapshot);
+                }
+            }
+            Command::Subscribe { events }
+        }
     })
+}
+
+fn subscribe(paths: &Paths, events: Vec<EventKind>) -> ExitCode {
+    let lines = match pane_agent::control::subscribe(&paths.socket(), events) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "pane: cannot subscribe at {} ({e}). Is it running?",
+                paths.socket().display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut out = std::io::stdout().lock();
+    for line in lines {
+        let Ok(line) = line else { break };
+        // Stop quietly when the reader goes away (`| head`).
+        if writeln!(out, "{line}").and_then(|_| out.flush()).is_err() {
+            break;
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 fn send(paths: &Paths, cmd: &Command) -> std::io::Result<Reply> {
