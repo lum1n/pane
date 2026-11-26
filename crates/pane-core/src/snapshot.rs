@@ -21,6 +21,20 @@ pub struct Snapshot {
     pub profiles: Vec<String>,
     #[serde(default)]
     pub ax_trusted: bool,
+    /// How the shell draws the focus border and dimming.
+    #[serde(default)]
+    pub appearance: SnapAppearance,
+}
+
+/// Focus border and dimming, from `[settings]`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SnapAppearance {
+    /// Points; 0 = no border.
+    pub border_width: f64,
+    /// RGBA in 0..=1; `None` = the system accent colour.
+    pub border_color: Option<[f64; 4]>,
+    /// Darkening of unfocused windows, 0..=0.8.
+    pub dim_unfocused: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -175,5 +189,10 @@ pub fn build(m: &Model) -> Snapshot {
         active_profile: m.active_profile.clone(),
         profiles: vec![],
         ax_trusted: true,
+        appearance: SnapAppearance {
+            border_width: m.config.settings.border_width,
+            border_color: m.config.border_rgba().unwrap_or(None),
+            dim_unfocused: m.config.settings.dim_unfocused,
+        },
     }
 }

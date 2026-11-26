@@ -66,6 +66,14 @@ pub struct Settings {
     pub gestures: bool,
     /// Modifier(s) for gestures; empty means the same as `modifier`.
     pub gesture_modifier: String,
+    /// Width in points of the border drawn around the focused window
+    /// (0 turns it off).
+    pub border_width: f64,
+    /// Border colour: "accent" (the system accent colour) or "#rgb",
+    /// "#rrggbb", "#rrggbbaa".
+    pub border_color: String,
+    /// How much to darken windows that do not have focus (0 = off, 0.8 max).
+    pub dim_unfocused: f64,
 }
 
 impl Default for Settings {
@@ -92,6 +100,9 @@ impl Default for Settings {
             tile_apps: vec![],
             gestures: true,
             gesture_modifier: String::new(),
+            border_width: 2.0,
+            border_color: "accent".into(),
+            dim_unfocused: 0.0,
         }
     }
 }
@@ -581,6 +592,15 @@ impl Config {
                 "resize_step must be between 0.005 and 0.5",
             ));
         }
+        if !(0.0..=20.0).contains(&s.border_width) {
+            return Err(ConfigError::plain("border_width must be between 0 and 20"));
+        }
+        if !(0.0..=0.8).contains(&s.dim_unfocused) {
+            return Err(ConfigError::plain(
+                "dim_unfocused must be between 0 and 0.8",
+            ));
+        }
+        self.border_rgba()?;
         for d in &self.displays {
             let n =
                 d.uuid.is_some() as u8 + d.match_name.is_some() as u8 + d.position.is_some() as u8;
@@ -735,6 +755,12 @@ impl Config {
             .map_err(|e| ConfigError::plain(format!("[settings] modifier: {e}")))
     }
 
+    /// `border_color` as RGBA in 0..=1, or `None` for the system accent colour.
+    pub fn border_rgba(&self) -> Result<Option<[f64; 4]>, ConfigError> {
+        parse_color(&self.settings.border_color)
+            .map_err(|e| ConfigError::plain(format!("[settings] border_color: {e}")))
+    }
+
     /// Modifiers that start a gesture, or `None` when gestures are off.
     pub fn gesture_mods(&self) -> Result<Option<Mods>, ConfigError> {
         if !self.settings.gestures {
@@ -768,6 +794,30 @@ fn line_col(text: &str, offset: usize) -> (usize, usize) {
     (line, col)
 }
 
+/// "accent" -> `None`; "#rgb", "#rrggbb" or "#rrggbbaa" -> RGBA in 0..=1.
+pub fn parse_color(s: &str) -> Result<Option<[f64; 4]>, String> {
+    let t = s.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("accent") {
+        return Ok(None);
+    }
+    let bad = || format!("`{s}` is not \"accent\" or a #rrggbb colour");
+    let hex = t.strip_prefix('#').ok_or_else(bad)?;
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(bad());
+    }
+    let digits: Vec<u8> = match hex.len() {
+        3 => hex.chars().flat_map(|c| [c, c]).map(|c| c as u8).collect(),
+        6 | 8 => hex.bytes().collect(),
+        _ => return Err(bad()),
+    };
+    let byte = |i: usize| {
+        let pair = std::str::from_utf8(&digits[i..i + 2]).unwrap_or("00");
+        u8::from_str_radix(pair, 16).unwrap_or(0) as f64 / 255.0
+    };
+    let alpha = if digits.len() == 8 { byte(6) } else { 1.0 };
+    Ok(Some([byte(0), byte(2), byte(4), alpha]))
+}
+
 /// Commented starter config written on first launch.
 pub const STARTER_CONFIG: &str = r#"# Pane configuration. Reload with alt-shift-r or `pane reload`.
 version = 1
@@ -791,6 +841,13 @@ modifier = "alt"
 # as `modifier`.
 gestures = true
 # gesture_modifier = "ctrl-alt"
+
+# A border around the focused window (0 = off) and dimming of the others
+# (0 = off, up to 0.8). border_color is "accent" or a hex colour like
+# ff8000 or ff800080, written with a leading hash.
+border_width = 2
+border_color = "accent"
+dim_unfocused = 0
 
 # Apps whose windows always start floating (bundle ids, or the executable
 # name for apps started from a terminal; * globs work).
@@ -928,6 +985,30 @@ mod tests {
             .any(|(ch, cmd)| ch.display() == "cmd-ctrl-x" && *cmd == Command::Reload));
         assert!(Config::parse("[settings]\nmodifier = \"shift\"\n").is_err());
         assert!(Config::parse("[settings]\nmodifier = \"fn\"\n").is_err());
+    }
+
+    #[test]
+    fn border_and_dim_settings() {
+        let c = Config::default();
+        assert_eq!(c.settings.border_width, 2.0);
+        assert_eq!(c.border_rgba().unwrap(), None);
+        let c = Config::parse(
+            "[settings]\nborder_width = 4\nborder_color = \"#ff8000\"\ndim_unfocused = 0.3\n",
+        )
+        .unwrap();
+        assert_eq!(c.settings.border_width, 4.0);
+        assert_eq!(c.settings.dim_unfocused, 0.3);
+        let [r, g, b, a] = c.border_rgba().unwrap().unwrap();
+        assert_eq!((r, b, a), (1.0, 0.0, 1.0));
+        assert!((g - 128.0 / 255.0).abs() < 1e-9);
+        assert_eq!(parse_color("#fff").unwrap(), Some([1.0; 4]));
+        assert_eq!(parse_color("#00000080").unwrap().unwrap()[3], 128.0 / 255.0);
+        for bad in ["red", "#12", "#ggg", "fff"] {
+            assert!(parse_color(bad).is_err(), "{bad}");
+        }
+        assert!(Config::parse("[settings]\nborder_color = \"blue\"\n").is_err());
+        assert!(Config::parse("[settings]\nborder_width = 30\n").is_err());
+        assert!(Config::parse("[settings]\ndim_unfocused = 0.9\n").is_err());
     }
 
     #[test]

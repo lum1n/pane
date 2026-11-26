@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         core.onSnapshot = { [weak self] s in
             self?.statusItem.button?.image = StatusIconRenderer.render(s)
             self?.editor?.model.snapshot = s
+            FocusBorder.shared.update(s)
         }
         core.onRequest = { [weak self] r in self?.handle(request: r) }
         if let err = core.start() {

@@ -53,6 +53,8 @@ To move a window with the mouse, hold the modifier (Option by default) over it a
 
 Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Hotkeys or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
 
+The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
+
 The `pane` CLI talks to the running app over a Unix socket:
 
 ```sh

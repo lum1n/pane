@@ -20,6 +20,9 @@ struct PaneSettings: Codable, Equatable {
     var tile_apps: [String]
     var gestures: Bool
     var gesture_modifier: String
+    var border_width: Double
+    var border_color: String
+    var dim_unfocused: Double
 }
 
 private struct ConfigReply: Codable {
@@ -213,6 +216,7 @@ private struct GeneralSettingsView: View {
     @ObservedObject var model: SettingsModel
     @State private var axGranted = false
     @State private var electron = ""
+    @State private var dim = 0.0
 
     private var supportDir: URL {
         if let d = ProcessInfo.processInfo.environment["PANE_SUPPORT_DIR"] { return URL(fileURLWithPath: d) }
@@ -227,6 +231,32 @@ private struct GeneralSettingsView: View {
 
     private func toggle(_ key: String, _ get: @escaping (PaneSettings) -> Bool) -> Binding<Bool> {
         Binding(get: { model.settings.map(get) ?? false }, set: { model.set(key, $0) })
+    }
+
+    static func isAccent(_ c: String) -> Bool {
+        let t = c.trimmingCharacters(in: .whitespaces).lowercased()
+        return t.isEmpty || t == "accent"
+    }
+
+    /// "#rgb", "#rrggbb" or "#rrggbbaa" -> Color (anything else: orange).
+    static func color(hex: String) -> Color {
+        var h = hex.trimmingCharacters(in: .whitespaces)
+        if h.hasPrefix("#") { h.removeFirst() }
+        if h.count == 3 { h = h.map { "\($0)\($0)" }.joined() }
+        guard h.count == 6 || h.count == 8, let v = UInt64(h, radix: 16) else { return .orange }
+        let n = h.count == 8 ? v : (v << 8 | 0xff)
+        return Color(.sRGB,
+                     red: Double((n >> 24) & 0xff) / 255,
+                     green: Double((n >> 16) & 0xff) / 255,
+                     blue: Double((n >> 8) & 0xff) / 255,
+                     opacity: Double(n & 0xff) / 255)
+    }
+
+    /// Color -> "#rrggbbaa" in sRGB.
+    static func hex(_ c: Color) -> String {
+        let ns = NSColor(c).usingColorSpace(.sRGB) ?? .orange
+        let b = { (x: CGFloat) in Int((min(max(x, 0), 1) * 255).rounded()) }
+        return String(format: "#%02x%02x%02x%02x", b(ns.redComponent), b(ns.greenComponent), b(ns.blueComponent), b(ns.alphaComponent))
     }
 
     var body: some View {
@@ -247,6 +277,27 @@ private struct GeneralSettingsView: View {
                         set: { model.set("resize_step", $0 / 100) }
                     ), format: .number)
                     TextField("Float windows smaller than (pt)", value: number("auto_float_below") { $0.auto_float_below }, format: .number)
+                }
+                Section("Focus") {
+                    TextField("Border around the focused window (pt, 0 = off)", value: number("border_width") { $0.border_width }, format: .number)
+                    Toggle("Use the system accent colour", isOn: Binding(
+                        get: { Self.isAccent(model.settings?.border_color ?? "accent") },
+                        set: { model.set("border_color", $0 ? "accent" : "#ff8000") }
+                    ))
+                    if !Self.isAccent(s.border_color) {
+                        ColorPicker("Border colour", selection: Binding(
+                            get: { Self.color(hex: s.border_color) },
+                            set: { model.set("border_color", Self.hex($0)) }
+                        ))
+                    }
+                    LabeledContent("Dim other windows") {
+                        Slider(value: $dim, in: 0...0.8) { editing in
+                            if !editing { model.set("dim_unfocused", (dim * 100).rounded() / 100) }
+                        }
+                        .frame(maxWidth: 220)
+                    }
+                    .onAppear { dim = s.dim_unfocused }
+                    .onChange(of: s.dim_unfocused) { _, v in dim = v }
                 }
                 Section("Behaviour") {
                     Toggle("Put relaunched windows back in their tiles", isOn: toggle("restore_placements") { $0.restore_placements })
