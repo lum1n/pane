@@ -1564,6 +1564,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             Err(e) => Reply::err(e),
         },
         Command::SetSetting { .. }
+        | Command::SetScratchpads { .. }
         | Command::Rebind { .. }
         | Command::ResetShortcuts
         | Command::SuspendHotkeys { .. } => Reply::err("config editing is handled by the runtime"),

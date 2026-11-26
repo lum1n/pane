@@ -65,6 +65,23 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             }
             pads.submenu = padMenu
             menu.addItem(pads)
+            let summon = NSMenuItem(title: "Summon", action: nil, keyEquivalent: "")
+            let summonMenu = NSMenu()
+            let apps = NSWorkspace.shared.runningApplications
+                .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+                .compactMap { a in a.bundleIdentifier.map { (id: $0, name: a.localizedName ?? $0) } }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            for a in apps {
+                let i = item(a.name, #selector(summonApp(_:)), obj: a.id)
+                if let icon = AppIcons.icon(for: a.id).copy() as? NSImage {
+                    icon.size = NSSize(width: 16, height: 16)
+                    i.image = icon
+                }
+                summonMenu.addItem(i)
+            }
+            summon.submenu = summonMenu
+            summon.toolTip = "Bring an app's window to this workspace, next to the focused tile"
+            menu.addItem(summon)
             let profiles = NSMenuItem(title: s.active_profile.map { "Profile: \($0)" } ?? "Profiles", action: nil, keyEquivalent: "")
             let sub = NSMenu()
             let desk = s.desk_profiles ?? []
@@ -121,6 +138,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func showWorkspace(_ sender: NSMenuItem) {
         if let n = sender.representedObject as? String { PaneCore.shared.showWorkspace(n) }
+    }
+
+    @objc private func summonApp(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        if case let .error(m) = PaneCore.shared.send(["cmd": "summon", "app": id]) { NoticeHUD.shared.show(m) }
     }
 
     @objc private func toggleScratchpad(_ sender: NSMenuItem) {

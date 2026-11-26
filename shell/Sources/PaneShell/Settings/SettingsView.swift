@@ -46,6 +46,10 @@ final class SettingsModel: ObservableObject {
     @Published var configError: String?
     @Published var message: String?
     @Published var recording: String?
+    /// The scratchpads being edited; `scratchpadsDirty` while they differ
+    /// from config.toml.
+    @Published var scratchpads: [SnapScratchpad] = []
+    @Published var scratchpadsDirty = false
     private var keyNames: [UInt16: String] = [:]
     private var monitor: Any?
 
@@ -58,6 +62,7 @@ final class SettingsModel: ObservableObject {
         if case let .success(rows) = PaneCore.shared.request(["cmd": "query", "what": "bindings"], as: [BindingRow].self) {
             bindings = rows
         }
+        if !scratchpadsDirty { scratchpads = PaneCore.shared.snapshot?.scratchpads ?? [] }
         if keyNames.isEmpty,
            case let .success(keys) = PaneCore.shared.request(["cmd": "query", "what": "keys"], as: [String: UInt16].self) {
             keyNames = Dictionary(keys.map { ($0.value, $0.key) }, uniquingKeysWith: { a, _ in a })
@@ -81,6 +86,31 @@ final class SettingsModel: ObservableObject {
 
     func clear(_ key: String) {
         finish(PaneCore.shared.send(["cmd": "set-setting", "key": key, "value": NSNull()]))
+    }
+
+    /// Write the edited scratchpads to config.toml. The name is only
+    /// written when it differs from the app.
+    func applyScratchpads() {
+        let rows: [[String: Any]] = scratchpads.map { sp in
+            func clean(_ s: String?) -> String? {
+                let t = s?.trimmingCharacters(in: .whitespaces) ?? ""
+                return t.isEmpty ? nil : t
+            }
+            var d: [String: Any] = ["app": sp.app.trimmingCharacters(in: .whitespaces)]
+            if let n = clean(sp.name), n != sp.app { d["name"] = n }
+            if let k = clean(sp.key) { d["key"] = k }
+            if let z = clean(sp.size) { d["size"] = z }
+            return d
+        }
+        let r = PaneCore.shared.send(["cmd": "set-scratchpads", "scratchpads": rows])
+        if case .ok = r { scratchpadsDirty = false }
+        finish(r, ok: "Scratchpads saved")
+    }
+
+    func revertScratchpads() {
+        scratchpadsDirty = false
+        message = nil
+        load()
     }
 
     func reload() {
@@ -197,6 +227,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             AppsSettingsView(model: model)
                 .tabItem { Label("Apps", systemImage: "square.on.square") }
+            ScratchpadSettingsView(model: model)
+                .tabItem { Label("Scratchpads", systemImage: "rectangle.on.rectangle") }
             HotkeySettingsView(model: model)
                 .tabItem { Label("Hotkeys", systemImage: "keyboard") }
         }
@@ -593,5 +625,90 @@ private struct AppListEditor: View {
             .padding(4)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+@MainActor
+private struct ScratchpadSettingsView: View {
+    @ObservedObject var model: SettingsModel
+
+    private func running() -> [KnownApp] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap { a in a.bundleIdentifier.map { KnownApp(id: $0, name: a.localizedName ?? $0) } }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func edit(_ i: Int, _ change: (inout SnapScratchpad) -> Void) {
+        guard model.scratchpads.indices.contains(i) else { return }
+        change(&model.scratchpads[i])
+        model.scratchpadsDirty = true
+    }
+
+    private func text(_ i: Int, _ get: @escaping (SnapScratchpad) -> String?, _ set: @escaping (inout SnapScratchpad, String) -> Void) -> Binding<String> {
+        Binding(
+            get: { model.scratchpads.indices.contains(i) ? get(model.scratchpads[i]) ?? "" : "" },
+            set: { v in edit(i) { set(&$0, v) } }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("A scratchpad is an app you call up with one key and dismiss with the same key. It shows the app's window as a centered float on the display you are working on.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(spacing: 10) {
+                    if model.scratchpads.isEmpty {
+                        Text("No scratchpads").foregroundStyle(.secondary).padding(.vertical, 8)
+                    }
+                    ForEach(model.scratchpads.indices, id: \.self) { i in
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Image(nsImage: AppIcons.icon(for: model.scratchpads[i].app)).resizable().frame(width: 18, height: 18)
+                                    TextField("App bundle id", text: text(i, { $0.app }, { if $0.name == $0.app { $0.name = $1 }; $0.app = $1 }))
+                                        .textFieldStyle(.roundedBorder)
+                                    Menu("Running Apps") {
+                                        ForEach(running(), id: \.self) { a in
+                                            Button("\(a.name)  (\(a.id))") { edit(i) { if $0.name == $0.app { $0.name = a.id }; $0.app = a.id } }
+                                        }
+                                    }
+                                    .frame(width: 130)
+                                    Button { model.scratchpads.remove(at: i); model.scratchpadsDirty = true } label: { Image(systemName: "minus.circle") }
+                                        .buttonStyle(.borderless)
+                                        .help("Remove")
+                                }
+                                HStack(spacing: 8) {
+                                    TextField("Name (defaults to the app)", text: text(i, { $0.name == $0.app ? nil : $0.name }, { $0.name = $1 }))
+                                        .textFieldStyle(.roundedBorder)
+                                    TextField("Key, e.g. mod-grave", text: text(i, { $0.key }, { $0.key = $1 }))
+                                        .textFieldStyle(.roundedBorder)
+                                    TextField("Size, e.g. 60%x60%", text: text(i, { $0.size }, { $0.size = $1 }))
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                            }
+                            .padding(4)
+                        }
+                    }
+                }
+            }
+            HStack {
+                Button("Add Scratchpad") {
+                    model.scratchpads.append(SnapScratchpad(name: "", app: "", key: nil, size: nil, shown: false))
+                    model.scratchpadsDirty = true
+                }
+                Spacer()
+                if let m = model.message { Text(m).font(.callout).foregroundStyle(.secondary) }
+                Button("Revert") { model.revertScratchpads() }.disabled(!model.scratchpadsDirty)
+                Button("Save") { model.applyScratchpads() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!model.scratchpadsDirty || model.scratchpads.contains { $0.app.trimmingCharacters(in: .whitespaces).isEmpty })
+            }
+            Text("Keys can also be changed on the Hotkeys tab. Leave the key empty for a scratchpad you only open from the menu or the palette.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
     }
 }

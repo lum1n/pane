@@ -899,6 +899,10 @@ impl Core {
                 return;
             }
             Command::SetSetting { ref key, ref value } => Some(self.set_setting(key, value)),
+            Command::SetScratchpads { ref scratchpads } => {
+                let list = scratchpads.clone();
+                Some(self.edit_config(move |t| Ok(persist::set_scratchpads(t, &list))))
+            }
             Command::Rebind {
                 ref command,
                 ref chord,

@@ -74,6 +74,7 @@ struct SnapScratchpad: Codable, Equatable {
     var name: String
     var app: String
     var key: String?
+    var size: String?
     var shown: Bool
 }
 

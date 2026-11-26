@@ -40,6 +40,8 @@ pub struct SnapScratchpad {
     pub app: String,
     /// Chord that toggles it, if it has one.
     pub key: Option<String>,
+    /// "WxH" as configured; the default when unset.
+    pub size: Option<String>,
     pub shown: bool,
 }
 
@@ -223,6 +225,7 @@ pub fn build(m: &Model) -> Snapshot {
                 name: sp.name().to_string(),
                 app: sp.app.clone(),
                 key: sp.key.clone(),
+                size: sp.size.clone(),
                 shown: m
                     .scratch
                     .get(sp.name())

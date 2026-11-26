@@ -75,4 +75,8 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Hidden, Cmd-Tab to iTerm shows it; the focus border follows it.
 - [ ] Hidden, the menu bar icon does not draw it; `pane query windows` shows `"visible": false`.
 - [ ] Quit Pane while it is hidden: the window comes back on screen.
+- [ ] Menu bar icon → Scratchpads lists each scratchpad, checked while shown; clicking toggles it. With none configured it says so.
+- [ ] Menu bar icon → Summon lists running apps; picking one moves its window next to the focused tile without switching workspace.
+- [ ] Settings → Scratchpads: Add Scratchpad, pick a running app, set a key and size, Save; `config.toml` gets a `[[scratchpad]]` (comments elsewhere intact) and the key works at once. Remove it and Save: the table is gone and the window is let go.
+- [ ] A bad size (`big`) shows the config error in the tab and leaves `config.toml` unchanged.
 - [ ] `pane do "summon Safari"` from another workspace moves a Safari window next to the focused tile without switching workspace; with Safari not running it opens.
