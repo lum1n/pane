@@ -39,6 +39,7 @@ All shortcuts are built on one **modifier** (`mod`, Option by default). Change i
 | `mod-return` | swap what this display and the next one show |
 | `mod-shift-r` | reload config |
 | `mod-shift-p` | profile picker |
+| `mod-/` | palette: go to any window, workspace, profile or command |
 
 You can also resize with the mouse: drag the edge a tiled window shares with a neighbour. When you let go, the tile keeps its new size and only that neighbour gives or takes space. Dragging an outer screen edge snaps the window back.
 
@@ -53,6 +54,8 @@ To move a window with the mouse, hold the modifier (Option by default) over it a
 
 Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Hotkeys or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
 
+`mod-/` (or **Go to Window…** in the menu) opens the palette. Type part of an app name or window title to find a window on any display or workspace, including hidden and minimized ones; Enter shows its workspace and focuses it. With nothing typed, the window you were in before comes first, so `mod-/` then Enter goes back. Workspaces and profiles are listed too; start with `>` to search only commands (each with its shortcut). `pane search TEXT` returns the same list as JSON.
+
 The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
 
 The `pane` CLI talks to the running app over a Unix socket:
@@ -61,6 +64,7 @@ The `pane` CLI talks to the running app over a Unix socket:
 pane ws 3                 pane query windows|displays|workspaces|tree|snapshot
 pane do "focus left"      pane profile list|apply NAME|capture NAME|delete NAME
 pane reload               pane recover [--all-apps]
+pane search saf           pane do "focus-window 1234"
 ```
 
 Settings (gaps, behaviour, startup profile, apps that always float or tile, all hotkeys) are in **Settings…** in the menu. They are stored in `~/Library/Application Support/Pane/config.toml`, which you can also edit by hand; see [docs/config.md](docs/config.md). Displays, workspaces and window rules are edited in the file.

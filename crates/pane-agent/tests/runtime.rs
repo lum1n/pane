@@ -257,6 +257,19 @@ fn runtime_tiles_parks_persists_and_restores() {
     let cfg = std::fs::read_to_string(dir.join("config.toml")).unwrap();
     assert!(cfg.contains("startup_profile = \"desk\""));
 
+    // The palette's search sees the saved profiles.
+    let Reply::Ok { data } = h.command(
+        Command::Search {
+            query: "desk".into(),
+            profiles: vec![],
+        },
+        Duration::from_secs(2),
+    ) else {
+        panic!()
+    };
+    assert_eq!(data[0]["kind"], "profile", "{data}");
+    assert_eq!(data[0]["command"]["name"], "desk");
+
     let r = h.command(
         Command::Query {
             what: QueryKind::Windows,

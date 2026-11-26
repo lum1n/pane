@@ -20,6 +20,10 @@ pub enum WorkerCmd {
     Focus {
         wid: WindowId,
     },
+    /// Un-minimize, then focus.
+    Restore {
+        wid: WindowId,
+    },
     /// Re-enumerate windows and report them as `WindowsDiscovered`.
     Enumerate,
     /// Pull windows sitting at a display's park corner back on screen: to

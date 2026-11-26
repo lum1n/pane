@@ -16,6 +16,7 @@ pub mod gesture;
 pub mod identity;
 pub mod layout;
 pub mod model;
+pub mod palette;
 pub mod profile;
 pub mod proto;
 pub mod reconcile;

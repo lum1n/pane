@@ -610,6 +610,11 @@ impl Core {
                         w.send(WorkerCmd::Focus { wid });
                     }
                 }
+                Effect::Restore { pid, wid } => {
+                    if let Some(w) = self.workers.get(&pid) {
+                        w.send(WorkerCmd::Restore { wid });
+                    }
+                }
                 Effect::WriteParked { entries } => {
                     if let Err(e) = persist::write_parked(&self.paths.parked(), &entries) {
                         tracing::error!("writing parked.json: {e}");
@@ -833,6 +838,15 @@ impl Core {
             Command::Query {
                 what: QueryKind::Snapshot,
             } => Some(Reply::data(&self.snapshot())),
+            // The core does not know the saved profiles; add them.
+            Command::Search { ref query, .. } => {
+                let cmd = Command::Search {
+                    query: query.clone(),
+                    profiles: self.profiles.clone(),
+                };
+                self.forward(cmd, reply);
+                return;
+            }
             Command::SetSetting { ref key, ref value } => Some(self.set_setting(key, value)),
             Command::Rebind {
                 ref command,

@@ -1604,3 +1604,120 @@ fn gesture_drop_unzooms_and_closing_the_window_cancels() {
         .iter()
         .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
 }
+
+fn search(s: &mut Sim, q: &str) -> Vec<pane_core::palette::PaletteItem> {
+    match s.cmd(Command::Search {
+        query: q.into(),
+        profiles: vec!["Work".into()],
+    }) {
+        Reply::Ok { data } => serde_json::from_value(data).unwrap(),
+        Reply::Error { message } => panic!("{message}"),
+    }
+}
+
+#[test]
+fn palette_finds_windows_and_jumps_to_them() {
+    use pane_core::palette::ItemKind;
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "com.apple.Safari");
+    s.launch(200, "com.apple.Terminal");
+    s.window(100, 1, "Rust docs", CENTER);
+    s.focus(100, 1);
+    s.now += 1000;
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.window(200, 2, "zsh", CENTER);
+    s.focus(200, 2);
+    s.now += 1000;
+
+    // Empty query: the previous window first, the focused one after it.
+    let items = search(&mut s, "");
+    assert_eq!(items[0].command, Command::FocusWindow { wid: 1 });
+    assert_eq!(items[1].command, Command::FocusWindow { wid: 2 });
+    assert!(items[1].current && !items[0].current);
+    assert!(
+        items[0].subtitle.contains("workspace 1"),
+        "{}",
+        items[0].subtitle
+    );
+    assert!(items
+        .iter()
+        .all(|i| matches!(i.kind, ItemKind::Window | ItemKind::Workspace)));
+
+    // Typing matches app names and titles.
+    let items = search(&mut s, "saf");
+    assert_eq!(items[0].command, Command::FocusWindow { wid: 1 });
+    let items = search(&mut s, "rust");
+    assert_eq!(items[0].command, Command::FocusWindow { wid: 1 });
+    assert!(search(&mut s, "qqqq").is_empty());
+
+    // `>` searches commands and profiles only.
+    let items = search(&mut s, ">float");
+    assert!(!items.is_empty());
+    assert!(items
+        .iter()
+        .all(|i| matches!(i.kind, ItemKind::Command | ItemKind::Profile)));
+    assert_eq!(items[0].command, Command::ToggleFloat);
+    assert!(items[0].shortcut.is_some());
+    let items = search(&mut s, ">work");
+    assert_eq!(
+        items[0].command,
+        Command::ProfileApply {
+            name: Some("Work".into()),
+            profile: None
+        }
+    );
+    assert!(!search(&mut s, ">")
+        .iter()
+        .any(|i| i.command == Command::Palette));
+
+    // Picking a window on a hidden workspace shows it and focuses it.
+    let fx = s.ev(Event::Command {
+        cmd: Command::FocusWindow { wid: 1 },
+        token: Some(1),
+    });
+    assert_eq!(s.m.visible["C"], "C/1");
+    assert_eq!(s.m.focused_window(), Some(WindowId(1)));
+    assert!(fx.contains(&Effect::Focus {
+        pid: 100,
+        wid: WindowId(1)
+    }));
+    assert!(s.on_screen(1) && !s.on_screen(2));
+
+    // A minimized window is restored when picked.
+    s.ev(Event::WindowMinimized {
+        pid: 200,
+        wid: WindowId(2),
+        minimized: true,
+    });
+    s.now += 1000;
+    let fx = s.ev(Event::Command {
+        cmd: Command::FocusWindow { wid: 2 },
+        token: Some(1),
+    });
+    assert_eq!(s.m.visible["C"], "C/2");
+    assert!(fx.contains(&Effect::Restore {
+        pid: 200,
+        wid: WindowId(2)
+    }));
+    assert!(matches!(
+        s.cmd(Command::FocusWindow { wid: 999 }),
+        Reply::Error { .. }
+    ));
+}
+
+#[test]
+fn palette_jump_ends_a_zoom_that_hides_the_window() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.window(100, 2, "two", CENTER);
+    s.focus(100, 2);
+    s.cmd(Command::ToggleFullscreen);
+    assert_eq!(s.frame(2).w, 1920.0);
+    s.cmd(Command::FocusWindow { wid: 1 });
+    assert!(s.m.ws("C/1").unwrap().fullscreen.is_none());
+    assert!(s.frame(2).w < 1000.0);
+    assert_eq!(s.m.focused_window(), Some(WindowId(1)));
+}

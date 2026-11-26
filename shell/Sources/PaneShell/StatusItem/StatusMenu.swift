@@ -68,6 +68,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             i.isEnabled = false
             menu.addItem(i)
         }
+        menu.addItem(item("Go to Window…", #selector(openPalette)))
         menu.addItem(item("Restore All Windows", #selector(recover)))
         menu.addItem(item("Reload Config", #selector(reload)))
         menu.addItem(.separator())
@@ -75,6 +76,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(item("Settings…", #selector(settings), key: ","))
         menu.addItem(.separator())
         menu.addItem(item("Quit Pane", #selector(quit), key: "q"))
+    }
+
+    @objc private func openPalette() {
+        // After the menu has closed, so the panel can take key focus.
+        DispatchQueue.main.async { MainActor.assumeIsolated { CommandPalette.shared.show() } }
     }
 
     /// A small menu of profiles at the mouse (the profile picker hotkey).
