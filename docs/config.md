@@ -152,6 +152,21 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `profile-when here\|off NAME` | `here`: apply NAME by itself whenever exactly the displays connected now are connected (writes its `[when]`); `off`: only by hand |
 | `recover`, `recover --all-apps` | |
 
+## Events (`pane subscribe`)
+
+`pane subscribe [KIND…] [--snapshot]` (on the socket: `{"cmd":"subscribe","events":["focus"]}`) answers `{"status":"ok"}`, then writes one JSON object per line, tagged by `event`. It starts with the current state, one event of each kind asked for, then sends an event whenever that part changes (at most every 50 ms). No kinds means all of them except `snapshot`. It works only over the socket, not as a shortcut.
+
+| `event` | When | Fields |
+|---|---|---|
+| `focus` | the focused window, its title, or its display/workspace changes | `window` (id; null when the desktop has focus), `app` (bundle id), `title`, `display` (UUID), `workspace` |
+| `workspace-shown` | a display shows another workspace, or a display appears | `display`, `display_name`, `workspace`, `previous` |
+| `workspaces` | the workspace list changes (also window counts and guests) | `workspaces`: `id`, `name`, `display`, `home`, `guest`, `label`, `target`, `visible`, `windows` |
+| `displays` | a display is connected, unplugged or focused | `displays`: `id`, `name`, `is_main`, `rank`, `focused`; `focused` (UUID) |
+| `profile` | another profile becomes active | `active` |
+| `snapshot` | anything in `pane query snapshot` changes | `snapshot` |
+
+A client that reads too slowly (256 lines behind) is disconnected; Pane does not wait for it.
+
 ## Files
 
 | File | Content |

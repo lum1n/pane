@@ -18,6 +18,7 @@ use pane_core::proto::{Command, QueryKind, Reply, UiRequest};
 use pane_core::reconcile::reconcile;
 use pane_core::reducer::{reduce, refresh_placements};
 use pane_core::snapshot::Snapshot;
+use pane_core::stream::{self, EventKind};
 use pane_core::worker::WorkerCmd;
 use pane_core::Pid;
 
@@ -68,6 +69,22 @@ enum Msg {
     AxMissing,
     AxTrusted,
     Shutdown(Sender<()>),
+    Subscribe {
+        kinds: Vec<EventKind>,
+        tx: Sender<String>,
+    },
+}
+
+/// Lines a subscriber may have queued before it counts as stuck and is
+/// dropped.
+const SUBSCRIBER_BUFFER: usize = 256;
+
+/// A `pane subscribe` client.
+struct Subscriber {
+    kinds: Vec<EventKind>,
+    tx: Sender<String>,
+    /// The snapshot its events were last computed from.
+    last: Snapshot,
 }
 
 /// Cheap, cloneable handle to a running core.
@@ -101,6 +118,15 @@ impl Handle {
         let _ = self.tx.send(Msg::Command { cmd, reply: None });
     }
 
+    /// Stream events of `kinds` (empty = all but `snapshot`) as JSON lines,
+    /// starting with the current state. The channel closes when Pane stops,
+    /// or when the receiver falls more than 256 lines behind.
+    pub fn subscribe(&self, kinds: Vec<EventKind>) -> Receiver<String> {
+        let (tx, rx) = crossbeam_channel::bounded(SUBSCRIBER_BUFFER);
+        let _ = self.tx.send(Msg::Subscribe { kinds, tx });
+        rx
+    }
+
     pub fn send_event(&self, e: Event) {
         let _ = self.tx.send(Msg::Event(e));
     }
@@ -129,7 +155,17 @@ impl Handle {
     }
 }
 
-pub fn now_ms() -> u64 {
+/// Send `sub` the events from `prev` to `next`. False when the subscriber
+/// is gone or its buffer is full (a slow reader must not hold up the core).
+fn send_events(sub: &Subscriber, prev: Option<&Snapshot>, next: &Snapshot) -> bool {
+    stream::diff(prev, next, &sub.kinds).iter().all(|ev| {
+        serde_json::to_string(ev)
+            .map(|line| sub.tx.try_send(line).is_ok())
+            .unwrap_or(true)
+    })
+}
+
+fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -234,6 +270,7 @@ pub fn start(platform: Arc<dyn Platform>, opts: Options) -> Result<Handle, Strin
         paths: paths.clone(),
         on_snapshot: opts.on_snapshot.clone(),
         on_request: opts.on_request.clone(),
+        subscribers: Vec::new(),
         workers: HashMap::new(),
         ev_tx,
         pending: HashMap::new(),
@@ -342,6 +379,7 @@ struct Core {
     paths: Paths,
     on_snapshot: Option<Sink>,
     on_request: Option<Sink>,
+    subscribers: Vec<Subscriber>,
     workers: HashMap<Pid, Box<dyn AppWorker>>,
     ev_tx: Sender<Event>,
     pending: HashMap<u64, Sender<Reply>>,
@@ -511,6 +549,17 @@ impl Core {
                 self.last_reconcile = 0;
                 self.reconcile_if_due();
                 self.shutdown = Some((done, now_ms() + SHUTDOWN_MS));
+            }
+            Msg::Subscribe { kinds, tx } => {
+                let snap = self.snapshot();
+                let sub = Subscriber {
+                    kinds,
+                    tx,
+                    last: snap.clone(),
+                };
+                if send_events(&sub, None, &snap) {
+                    self.subscribers.push(sub);
+                }
             }
         }
     }
@@ -736,19 +785,30 @@ impl Core {
 
     fn emit_snapshot(&mut self) {
         self.last_snapshot_at = now_ms();
-        let Some(sink) = &self.on_snapshot else {
+        if self.on_snapshot.is_none() && self.subscribers.is_empty() {
             return;
-        };
-        let Ok(json) = serde_json::to_string(&self.snapshot()) else {
-            return;
-        };
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        json.hash(&mut h);
-        let hash = h.finish();
-        if hash != self.last_snapshot_hash {
-            self.last_snapshot_hash = hash;
-            sink(&json);
         }
+        let snap = self.snapshot();
+        if let Some(sink) = &self.on_snapshot {
+            if let Ok(json) = serde_json::to_string(&snap) {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                json.hash(&mut h);
+                let hash = h.finish();
+                if hash != self.last_snapshot_hash {
+                    self.last_snapshot_hash = hash;
+                    sink(&json);
+                }
+            }
+        }
+        // Each subscriber diffs against what it last saw (it may have
+        // joined between two snapshots). Gone or stuck ones are dropped.
+        self.subscribers.retain_mut(|sub| {
+            if sub.last == snap {
+                return true;
+            }
+            let prev = std::mem::replace(&mut sub.last, snap.clone());
+            send_events(sub, Some(&prev), &snap)
+        });
     }
 
     fn persist(&mut self) {

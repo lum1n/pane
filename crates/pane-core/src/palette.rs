@@ -367,6 +367,9 @@ mod tests {
         assert_eq!(humanize("move-to-workspace 3"), "Move to workspace 3");
         assert_eq!(humanize("toggle-float"), "Toggle float");
         assert_eq!(humanize("open-editor"), "Open profile editor");
-        assert_eq!(humanize("summon Visual Studio Code"), "Summon Visual Studio Code");
+        assert_eq!(
+            humanize("summon Visual Studio Code"),
+            "Summon Visual Studio Code"
+        );
     }
 }

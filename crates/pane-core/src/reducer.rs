@@ -1574,6 +1574,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         | Command::ProfileList
         | Command::ProfileWhen { .. } => Reply::err("profile storage is handled by the runtime"),
         Command::Ping => Reply::data(&"pong"),
+        Command::Subscribe { .. } => Reply::err("subscribe works only over the control socket"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
         Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
         Command::Scratchpad { name } => cmd_scratchpad(m, &name, fx),

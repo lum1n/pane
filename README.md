@@ -81,6 +81,28 @@ pane do "focus left"      pane profile list|apply|capture|delete|auto|manual NAM
 pane reload               pane recover [--all-apps]
 pane search saf           pane do "focus-window 1234"
 pane do "scratchpad com.googlecode.iterm2"    pane do "summon Safari"
+pane subscribe [focus|workspace-shown|workspaces|displays|profile] [--snapshot]
+```
+
+### Scripting with `pane subscribe`
+
+`pane subscribe` prints one JSON line each time something changes: focus, the workspace a display shows, the workspace list, displays, the active profile. It starts with the current state, so a widget can draw at once, and runs until Pane quits. Name kinds to get only those; `--snapshot` adds the whole menu bar snapshot on every change. The events are listed in [docs/config.md](docs/config.md#events-pane-subscribe).
+
+A SketchyBar item that shows the workspace on the focused display:
+
+```sh
+pane subscribe workspace-shown focus | while read -r ev; do
+  ws=$(jq -r 'select(.event == "focus") | .workspace // empty' <<<"$ev")
+  [ -n "$ws" ] && sketchybar --set pane_ws label="$ws"
+done
+```
+
+Turn on Do Not Disturb while workspace 3 is shown:
+
+```sh
+pane subscribe workspace-shown | jq --unbuffered -r '.workspace' | while read -r ws; do
+  if [ "$ws" = 3 ]; then shortcuts run "DND on"; else shortcuts run "DND off"; fi
+done
 ```
 
 Settings (gaps, behaviour, startup profile, apps that always float or tile, all hotkeys) are in **Settings…** in the menu. They are stored in `~/Library/Application Support/Pane/config.toml`, which you can also edit by hand; see [docs/config.md](docs/config.md). Displays, workspaces and window rules are edited in the file.
