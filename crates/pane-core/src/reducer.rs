@@ -12,7 +12,7 @@ use crate::geometry::{neighbor_in_direction, Direction, Orientation, Rect};
 use crate::identity::{match_windows, PlacementRecord, WindowFingerprint};
 use crate::model::{
     AppInfo, Model, PendingSlot, WindowInfo, WindowMode, FOLLOW_SUPPRESS_MS, GHOST_TTL_MS,
-    MAX_RECORDS_PER_APP, PENDING_SLOT_MS, RESYNC_DELAY_MS, UNRESPONSIVE_AFTER_MS,
+    MAX_RECORDS_PER_APP, PENDING_SLOT_MS, RESYNC_DELAY_MS, UNRESPONSIVE_AFTER_MS, WATCHDOG_MS,
 };
 use crate::profile::{title_matches, Profile, ProfileDisplay};
 use crate::proto::{Command, QueryKind, Reply, UiRequest};
@@ -75,13 +75,19 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
                 fx.push(Effect::Snapshot);
             }
         }
-        Event::FocusChanged { wid, frontmost, .. } => {
+        Event::FocusChanged {
+            wid,
+            frontmost,
+            activated,
+            ..
+        } => {
             if let Some(wid) = wid {
-                focus_changed(m, wid, frontmost, &mut fx);
+                focus_changed(m, wid, frontmost, activated, &mut fx);
             }
         }
         Event::WindowMinimized { wid, minimized, .. } => {
             if let Some(w) = m.windows.get_mut(&wid) {
+                tracing::info!(%wid, minimized, "window minimized state");
                 w.minimized = minimized;
                 m.last_sent.remove(&wid);
                 m.layout_dirty = true;
@@ -462,14 +468,16 @@ fn discover(
         let parked_now = looks_parked(m, &p.frame);
         let restore_frame = restore.get(&p.wid).copied();
         let sane_frame = |m: &Model, ws: &str| -> Rect {
-            if !parked_now {
+            let ws_display = m.ws(ws).and_then(|w| m.display(&w.display));
+            // Keep the window's frame when it is on screen and on the
+            // workspace's own display; otherwise bring it there.
+            let on_ws_display = display_for_rect(&m.displays, &p.frame)
+                .zip(ws_display)
+                .is_some_and(|(a, b)| a.id == b.id);
+            if !parked_now && (on_ws_display || ws_display.is_none()) {
                 return p.frame;
             }
-            let area = m
-                .ws(ws)
-                .and_then(|w| m.display(&w.display))
-                .map(|d| d.visible_frame)
-                .unwrap_or(p.frame);
+            let area = ws_display.map(|d| d.visible_frame).unwrap_or(p.frame);
             match restore_frame {
                 Some(r) => r.fit_into(&area),
                 None => Rect::new(
@@ -532,7 +540,7 @@ fn discover(
                 let home = if m.knows_display(&home) {
                     home
                 } else {
-                    (if initial {
+                    (if initial && !m.initial_scan_done {
                         display_for_rect(&m.displays, &p.frame).map(|x| x.id.clone())
                     } else {
                         None
@@ -571,7 +579,12 @@ fn discover(
                     .as_ref()
                     .and_then(|r| r.resolve(&m.displays))
                     .map(|x| x.id.clone());
-                let natural = if initial {
+                // Windows that already existed when Pane started stay on the
+                // display they are on. Anything opened later goes to the
+                // display you are working on: macOS tends to open new apps
+                // on the main display, and following that would also move
+                // the hotkeys' target display there.
+                let natural = if initial && !m.initial_scan_done {
                     display_for_rect(&m.displays, &p.frame).map(|x| x.id.clone())
                 } else {
                     m.focused_display()
@@ -1010,7 +1023,13 @@ fn frame_changed(m: &mut Model, wid: WindowId, frame: Rect, fx: &mut Vec<Effect>
     }
 }
 
-fn focus_changed(m: &mut Model, wid: WindowId, frontmost: bool, fx: &mut Vec<Effect>) {
+fn focus_changed(
+    m: &mut Model,
+    wid: WindowId,
+    frontmost: bool,
+    activated: bool,
+    fx: &mut Vec<Effect>,
+) {
     let Some(w) = m.windows.get(&wid) else { return };
     let ws = w.workspace.clone();
     if !frontmost {
@@ -1026,7 +1045,12 @@ fn focus_changed(m: &mut Model, wid: WindowId, frontmost: bool, fx: &mut Vec<Eff
     let repeat = m.os_focus == Some(wid);
     m.os_focus = Some(wid);
     if !m.is_visible(&ws) {
-        if repeat || m.now_ms < m.suppress_follow_until {
+        // Only an app activation (Cmd-Tab, Dock, clicking into it) shows a
+        // hidden workspace. Plain focus-change notices also arrive, late,
+        // for windows we just hid; following those undid switches.
+        let suppressed = m.now_ms < m.suppress_follow_until;
+        if !activated || suppressed {
+            tracing::info!(%wid, workspace = %ws, repeat, activated, suppressed, "ignored focus report from a hidden workspace");
             match m.focused_window() {
                 Some(f) => focus_fx(m, f, fx),
                 None => fx.push(Effect::FocusDesktop),
@@ -1034,6 +1058,7 @@ fn focus_changed(m: &mut Model, wid: WindowId, frontmost: bool, fx: &mut Vec<Eff
             return;
         }
         // Cmd-Tab or a Dock click on a hidden window: show its workspace.
+        tracing::info!(%wid, workspace = %ws, "focus moved to a hidden window: following");
         show_workspace(m, &ws, fx, false);
     }
     let d = m.ws(&ws).map(|w| w.display.clone());
@@ -1051,7 +1076,10 @@ fn focus_changed(m: &mut Model, wid: WindowId, frontmost: bool, fx: &mut Vec<Eff
 }
 
 fn focus_fx(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) {
-    let Some(w) = m.windows.get(&wid) else { return };
+    // Focusing a minimized window would restore it: the user minimized it.
+    let Some(w) = m.windows.get(&wid).filter(|w| !w.minimized) else {
+        return;
+    };
     let (pid, ws) = (w.pid, w.workspace.clone());
     fx.push(Effect::Focus { pid, wid });
     m.os_focus = Some(wid);
@@ -1073,7 +1101,13 @@ fn first_window(m: &Model, ws: &str) -> Option<WindowId> {
                 .get(x)
                 .is_some_and(|i| !i.minimized && i.mode == WindowMode::Tiled)
         })
-        .or_else(|| w.floating.last().copied())
+        .or_else(|| {
+            w.floating
+                .iter()
+                .rev()
+                .copied()
+                .find(|f| m.windows.get(f).is_some_and(|i| !i.minimized))
+        })
 }
 
 fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
@@ -1086,7 +1120,10 @@ fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
         d = fd;
         m.ws_mut(ws).unwrap().display = d.clone();
     }
-    m.visible.insert(d.clone(), ws.into());
+    let previous = m.visible.insert(d.clone(), ws.into());
+    if let Some(prev) = previous.filter(|p| p != ws) {
+        tracing::info!(display = %d, from = %prev, to = %ws, "workspace switch");
+    }
     m.remembered_visible.insert(d.clone(), ws.into());
     m.focus_display = Some(d);
     m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
@@ -1096,7 +1133,8 @@ fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
         floats.insert(0, z);
     }
     for f in floats {
-        if let Some(i) = m.windows.get(&f) {
+        // Raising a minimized window would restore it.
+        if let Some(i) = m.windows.get(&f).filter(|i| !i.minimized) {
             fx.push(Effect::Raise { pid: i.pid, wid: f });
         }
     }
@@ -1104,7 +1142,11 @@ fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
         let w = m.ws(ws).unwrap();
         let target = w
             .focused
-            .filter(|f| m.windows.get(f).is_some_and(|i| i.workspace == ws))
+            .filter(|f| {
+                m.windows
+                    .get(f)
+                    .is_some_and(|i| i.workspace == ws && !i.minimized)
+            })
             .or_else(|| first_window(m, ws));
         match target {
             Some(t) => focus_fx(m, t, fx),
@@ -1159,6 +1201,24 @@ fn prune_ghosts(m: &mut Model, ws: &str) {
 
 fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
     let now = m.now_ms;
+    // Watchdog: a window of a shown workspace must be on screen. If one is
+    // found hidden (an app undid our move, a lost update), send it again.
+    if now >= m.next_watchdog_ms {
+        m.next_watchdog_ms = now + WATCHDOG_MS;
+        let stray: Vec<WindowId> = m
+            .windows
+            .values()
+            .filter(|w| !w.minimized && m.is_visible(&w.workspace))
+            .filter(|w| reconcile::mostly_hidden(m, &w.actual))
+            .filter(|w| m.last_sent.get(&w.id).is_none_or(|s| s.settled))
+            .map(|w| w.id)
+            .collect();
+        for w in stray {
+            tracing::warn!(wid = %w, title = %m.windows[&w].title, "watchdog: window of a shown workspace is off screen; resending");
+            m.last_sent.remove(&w);
+            m.layout_dirty = true;
+        }
+    }
     // Unresponsive apps.
     for app in m.apps.values_mut() {
         if !app.unresponsive

@@ -370,6 +370,15 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
             Some(s) if s.rect.approx_eq(&rect, 0.5) => s.attempts,
             _ => 0,
         };
+        let was_parked = m.last_sent.get(&wid).map(|s| s.parked);
+        if was_parked != Some(target_parked) {
+            let title = &m.windows[&wid].title;
+            if target_parked {
+                tracing::info!(%wid, %title, ?rect, "hiding window");
+            } else {
+                tracing::info!(%wid, %title, ?rect, "showing window");
+            }
+        }
         m.last_sent.insert(
             wid,
             SentFrame {
@@ -454,6 +463,16 @@ pub fn on_frame_applied(
         m.layout_dirty = true;
         return;
     }
+    // Bringing a window back from hiding: some apps apply moves late, so the
+    // read-back can still show it hidden. Keep trying (never give up on
+    // showing a window whose workspace is shown).
+    if !parked && mostly_hidden(m, &a) {
+        tracing::info!(%wid, ?a, target = ?d, attempts = s.attempts, "window still hidden after unpark; retrying");
+        let e = m.last_sent.get_mut(&wid).unwrap();
+        e.attempts = (s.attempts + 1).min(RETRY_BACKOFF_MS.len() as u32);
+        e.next_retry_ms = Some(m.now_ms + RETRY_BACKOFF_MS[(e.attempts - 1) as usize].min(1000));
+        return;
+    }
     let w = m.windows.get_mut(&wid).unwrap();
     if s.attempts == 0 && !w.double_set {
         w.double_set = true;
@@ -467,6 +486,7 @@ pub fn on_frame_applied(
         return;
     }
     if attempts as usize > RETRY_BACKOFF_MS.len() {
+        tracing::warn!(%wid, title = %w.title, ?a, target = ?d, "window refuses its frame; floating it");
         w.stubborn = true;
         let title = w.title.clone();
         let tiled = w.mode == WindowMode::Tiled;

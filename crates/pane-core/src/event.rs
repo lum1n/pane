@@ -72,6 +72,10 @@ pub enum Event {
         /// The app is the active (frontmost) app.
         #[serde(default = "yes")]
         frontmost: bool,
+        /// Reported because the app was activated (Cmd-Tab, Dock, a click
+        /// into it) rather than a focus change inside the app.
+        #[serde(default)]
+        activated: bool,
     },
     WindowMinimized {
         pid: Pid,

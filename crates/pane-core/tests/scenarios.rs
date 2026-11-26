@@ -53,6 +53,9 @@ struct Sim {
     /// Like macOS: a window pushed below a display's bottom edge is nudged
     /// back up so a 30pt strip stays visible.
     clamp_offscreen: bool,
+    /// Apps that apply a move late: the read-back right after a SetFrame
+    /// still shows the previous frame.
+    lagging: Vec<WindowId>,
     notices: Vec<String>,
     launches: Vec<String>,
     sets: usize,
@@ -73,6 +76,7 @@ impl Sim {
             frozen: vec![],
             stuck: vec![],
             clamp_offscreen: false,
+            lagging: vec![],
             notices: vec![],
             launches: vec![],
             sets: 0,
@@ -112,6 +116,11 @@ impl Sim {
                         } else {
                             Rect::new(rect.x, rect.y, rect.w.max(min.w), rect.h.max(min.h))
                         };
+                        let reported = if self.lagging.contains(wid) {
+                            self.frames.get(wid).copied()
+                        } else {
+                            None
+                        };
                         if self.clamp_offscreen {
                             let bottom = self
                                 .m
@@ -124,6 +133,7 @@ impl Sim {
                             }
                         }
                         self.frames.insert(*wid, actual);
+                        let actual = reported.unwrap_or(actual);
                         follow.push(Event::FrameApplied {
                             pid: *pid,
                             wid: *wid,
@@ -205,8 +215,10 @@ impl Sim {
     }
 
     fn focus(&mut self, pid: Pid, wid: u32) {
+        // A user Cmd-Tab / click: the app is activated.
         self.ev(Event::FocusChanged {
             frontmost: true,
+            activated: true,
             pid,
             wid: Some(WindowId(wid)),
         });
@@ -751,9 +763,15 @@ fn switching_is_not_undone_by_stale_focus_reports() {
         token: None,
     });
     assert!(fx.iter().any(|f| matches!(f, Effect::FocusDesktop)));
-    // Long after, macOS re-reports the window it had focused: no jump back.
+    // Long after, macOS re-reports the window it had focused (a plain
+    // focus notice, not an activation): no jump back.
     s.now += 5000;
-    s.focus(100, 1);
+    s.ev(Event::FocusChanged {
+        pid: 100,
+        wid: Some(WindowId(1)),
+        frontmost: true,
+        activated: false,
+    });
     assert_eq!(s.m.visible["C"], "C/2");
     // A background app reporting its own focus never switches.
     s.window(200, 2, "bg", CENTER);
@@ -763,6 +781,16 @@ fn switching_is_not_undone_by_stale_focus_reports() {
         pid: 200,
         wid: Some(WindowId(2)),
         frontmost: false,
+        activated: false,
+    });
+    assert_eq!(s.m.visible["C"], "C/3");
+    // A late, non-activation focus notice from the frontmost app for a
+    // window we hid does not switch back either.
+    s.ev(Event::FocusChanged {
+        pid: 200,
+        wid: Some(WindowId(2)),
+        frontmost: true,
+        activated: false,
     });
     assert_eq!(s.m.visible["C"], "C/3");
     // The user Cmd-Tabs to a different hidden window: follow it.
@@ -1097,4 +1125,133 @@ fn fullscreen_zooms_the_focused_tile() {
         wid: WindowId(3),
     });
     assert!(s.m.ws("C/1").unwrap().fullscreen.is_none());
+}
+
+#[test]
+fn new_apps_open_on_the_display_you_work_on() {
+    let mut s = Sim::new();
+    s.clamp_offscreen = true;
+    s.tick(2000);
+    s.ev(Event::InitialScanDone);
+    // Work on the right display (not the main one).
+    s.cmd(Command::FocusDisplay { which: Cycle::Next });
+    s.launch(100, "com.google.Chrome");
+    s.window(100, 1, "browser", CENTER);
+    s.focus(100, 1);
+    assert_eq!(s.m.windows[&WindowId(1)].workspace, "R/1");
+    s.cmd(Command::MoveToWorkspace { name: "2".into() });
+    s.now += 600;
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.now += 600;
+    s.cmd(Command::Workspace { name: "1".into() });
+    for _ in 0..5 {
+        s.tick(1000);
+    }
+    // A new app: macOS opens its window on the main (centre) display, and
+    // the worker reports it from its first enumeration.
+    s.ev(Event::AppLaunched {
+        pid: 200,
+        bundle_id: Some("com.apple.Notes".into()),
+        name: "Notes".into(),
+        regular: true,
+    });
+    let on_main = Rect::new(300.0, 200.0, 800.0, 600.0);
+    s.frames.insert(WindowId(2), on_main);
+    s.ev(Event::WindowsDiscovered {
+        pid: 200,
+        windows: vec![probe(200, 2, "notes", on_main)],
+        initial: true,
+    });
+    s.focus(200, 2);
+    assert_eq!(
+        s.m.windows[&WindowId(2)].workspace,
+        "R/1",
+        "opens where you work"
+    );
+    s.now += 600;
+    s.cmd(Command::Workspace { name: "2".into() });
+    assert_eq!(s.m.visible["R"], "R/2");
+    let f = s.frame(1);
+    assert!(
+        f.x >= 1920.0 && f.y < 100.0 && f.h > 900.0,
+        "browser tiled on the right display's w2: {f:?}"
+    );
+}
+
+#[test]
+fn minimized_windows_stay_minimized_across_switches() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.window(100, 2, "two", CENTER);
+    s.focus(100, 2);
+    s.ev(Event::WindowMinimized {
+        pid: 100,
+        wid: WindowId(2),
+        minimized: true,
+    });
+    assert_eq!(s.frame(1).w, 1908.0, "the other window takes the space");
+    s.cmd(Command::Workspace { name: "2".into() });
+    let fx = s.ev(Event::Command {
+        cmd: Command::Workspace { name: "1".into() },
+        token: None,
+    });
+    assert!(
+        !fx.iter().any(|f| matches!(
+            f,
+            Effect::Focus {
+                wid: WindowId(2),
+                ..
+            } | Effect::Raise {
+                wid: WindowId(2),
+                ..
+            } | Effect::SetFrame {
+                wid: WindowId(2),
+                ..
+            }
+        )),
+        "a minimized window is not focused, raised or moved: {fx:?}"
+    );
+    assert!(s.m.windows[&WindowId(2)].minimized);
+}
+
+#[test]
+fn late_applying_apps_still_come_back() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "com.google.Chrome");
+    s.window(100, 1, "browser", CENTER);
+    s.lagging.push(WindowId(1));
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.tick(3000);
+    s.cmd(Command::Workspace { name: "1".into() });
+    for _ in 0..5 {
+        s.tick(1000);
+    }
+    let f = s.frame(1);
+    assert!(
+        f.x < 100.0 && f.y < 100.0 && f.w > 1800.0,
+        "back in its tile: {f:?}"
+    );
+    assert!(!s.m.windows[&WindowId(1)].stubborn);
+    assert_eq!(s.m.windows[&WindowId(1)].mode, WindowMode::Tiled);
+}
+
+#[test]
+fn watchdog_resends_windows_found_hidden() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    // Something moved the window off screen behind our back and we missed it.
+    let hidden = Rect::new(1919.0, 1079.0, 900.0, 900.0);
+    s.frames.insert(WindowId(1), hidden);
+    s.m.windows.get_mut(&WindowId(1)).unwrap().actual = hidden;
+    s.tick(2500);
+    assert!(
+        s.frame(1).x < 100.0,
+        "watchdog put it back: {:?}",
+        s.frame(1)
+    );
 }

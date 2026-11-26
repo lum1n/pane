@@ -89,7 +89,9 @@ pub const UNRESPONSIVE_AFTER_MS: u64 = 2000;
 pub const PENDING_SLOT_MS: u64 = 30_000;
 pub const GHOST_TTL_MS: u64 = 10 * 60 * 1000;
 pub const RESYNC_DELAY_MS: u64 = 1000;
-pub const FOLLOW_SUPPRESS_MS: u64 = 500;
+pub const FOLLOW_SUPPRESS_MS: u64 = 1000;
+/// How often the watchdog checks that shown windows are on screen.
+pub const WATCHDOG_MS: u64 = 2000;
 pub const MAX_RECORDS_PER_APP: usize = 40;
 
 #[derive(Clone, Debug)]
@@ -140,6 +142,7 @@ pub struct Model {
     pub layout_dirty: bool,
     pub resync_at: Option<u64>,
     pub suppress_follow_until: u64,
+    pub next_watchdog_ms: u64,
     pub shutting_down: bool,
     pub initial_scan_done: bool,
 }
@@ -184,6 +187,7 @@ impl Model {
             layout_dirty: true,
             resync_at: None,
             suppress_follow_until: 0,
+            next_watchdog_ms: 0,
             shutting_down: false,
             initial_scan_done: false,
         }
@@ -499,6 +503,9 @@ impl Model {
         );
         t.extend(self.pending_slots.iter().map(|p| p.deadline_ms));
         t.extend(self.resync_at);
+        if !self.windows.is_empty() {
+            t.push(self.next_watchdog_ms.max(self.now_ms));
+        }
         t.extend(self.ghosts.values().map(|s| s + GHOST_TTL_MS));
         t.into_iter().min()
     }

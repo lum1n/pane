@@ -166,7 +166,7 @@ fn enumerate(st: &Rc<RefCell<State>>, initial: bool) {
             initial,
         },
     );
-    focused(st);
+    focused(st, false);
 }
 
 fn find(st: &Rc<RefCell<State>>, el: &AxElement) -> Option<WindowId> {
@@ -186,7 +186,7 @@ fn element(st: &Rc<RefCell<State>>, wid: WindowId) -> Option<AxElement> {
         .map(|(_, e)| e.clone())
 }
 
-fn focused(st: &Rc<RefCell<State>>) {
+fn focused(st: &Rc<RefCell<State>>, activated: bool) {
     let app = st.borrow().app.clone();
     let pid = st.borrow().pid;
     let wid = app.element("AXFocusedWindow").and_then(|el| {
@@ -214,6 +214,7 @@ fn focused(st: &Rc<RefCell<State>>) {
             pid,
             wid,
             frontmost,
+            activated,
         },
     );
 }
@@ -270,7 +271,8 @@ fn on_notification(st: &Rc<RefCell<State>>, el: AxElement, n: &str) {
                 );
             }
         }
-        "AXFocusedWindowChanged" | "AXApplicationActivated" => focused(st),
+        "AXFocusedWindowChanged" => focused(st, false),
+        "AXApplicationActivated" => focused(st, true),
         "AXApplicationShown" => enumerate(st, false),
         _ => {}
     }

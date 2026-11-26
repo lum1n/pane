@@ -25,6 +25,8 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] `mod-2` on any display switches only that display; each display has its own 1-9; `mod-[`/`mod-]` cycle.
 - [ ] Switching to an empty workspace and typing does not type into a hidden window; switching is never undone a moment later.
 - [ ] No hidden window peeks out on a neighbouring display.
+- [ ] Switch back and forth between workspaces many times, opening apps in between: windows are always in their tiles, never in a corner.
+- [ ] Minimize a window, switch away and back: it stays minimized.
 - [ ] Unplug right: its workspaces are hidden on the centre display (listed in the menu as "<display>: N"), whose visible workspace stays the same; nothing is lost. Replug: they return, showing the one that was visible before.
 - [ ] Repeat with the left display, then unplug two; then sleep and wake.
 - [ ] `alt-l` from the centre's rightmost tile focuses the (empty) right display; `alt-shift-.` moves a workspace; `alt-return` swaps.

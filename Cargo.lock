@@ -384,6 +384,7 @@ dependencies = [
  "smol_str",
  "thiserror",
  "toml",
+ "tracing",
 ]
 
 [[package]]

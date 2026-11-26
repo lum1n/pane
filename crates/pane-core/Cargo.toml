@@ -13,3 +13,4 @@ slotmap.workspace = true
 regex.workspace = true
 thiserror.workspace = true
 smol_str.workspace = true
+tracing.workspace = true
