@@ -40,6 +40,9 @@ pub struct State {
     /// Profile slot each window fills.
     #[serde(default)]
     pub window_slots: BTreeMap<WindowId, crate::tree::AppSlot>,
+    /// Scratchpad name -> its window.
+    #[serde(default)]
+    pub scratchpads: BTreeMap<String, WindowId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

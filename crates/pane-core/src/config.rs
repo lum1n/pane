@@ -26,6 +26,9 @@ pub struct Config {
     pub workspaces: Vec<WorkspaceConfig>,
     #[serde(default, rename = "rule")]
     pub rules: Vec<RuleConfig>,
+    /// Apps summoned and dismissed with one key, as a centered float.
+    #[serde(default, rename = "scratchpad")]
+    pub scratchpads: Vec<ScratchpadConfig>,
     /// Chord -> command, merged over the defaults. `"none"` unbinds.
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
@@ -163,6 +166,83 @@ pub struct RuleConfig {
     pub workspace: Option<String>,
     #[serde(default)]
     pub display: Option<String>,
+}
+
+/// `[[scratchpad]]`: one window of `app`, toggled by `scratchpad NAME`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchpadConfig {
+    /// What `scratchpad NAME` calls it; defaults to `app`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Bundle id (or executable name for unbundled apps).
+    pub app: String,
+    /// Chord that toggles it, e.g. "mod-grave".
+    #[serde(default)]
+    pub key: Option<String>,
+    /// "WxH", each side a percentage of the display ("60%") or points.
+    #[serde(default)]
+    pub size: Option<String>,
+}
+
+pub const DEFAULT_SCRATCHPAD_SIZE: &str = "60%x60%";
+
+impl ScratchpadConfig {
+    pub fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.app)
+    }
+
+    /// Width and height for a display whose visible frame is `w` x `h`.
+    pub fn size_in(&self, w: f64, h: f64) -> (f64, f64) {
+        let (sw, sh) = parse_size(self.size.as_deref().unwrap_or(DEFAULT_SCRATCHPAD_SIZE))
+            .unwrap_or((Length::Percent(60.0), Length::Percent(60.0)));
+        (sw.of(w).min(w), sh.of(h).min(h))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Length {
+    Percent(f64),
+    Points(f64),
+}
+
+impl Length {
+    pub fn of(self, total: f64) -> f64 {
+        match self {
+            Length::Percent(p) => total * p / 100.0,
+            Length::Points(p) => p,
+        }
+    }
+}
+
+/// `60%x50%`, `1200x800`, `50%x700`.
+pub fn parse_size(s: &str) -> Result<(Length, Length), String> {
+    let side = |t: &str| -> Result<Length, String> {
+        let t = t.trim();
+        let (num, pct) = match t.strip_suffix('%') {
+            Some(n) => (n, true),
+            None => (t, false),
+        };
+        let v: f64 = num
+            .trim()
+            .parse()
+            .map_err(|_| format!("size `{s}`: bad number `{t}`"))?;
+        if pct {
+            if !(10.0..=100.0).contains(&v) {
+                return Err(format!("size `{s}`: percentages go from 10% to 100%"));
+            }
+            Ok(Length::Percent(v))
+        } else {
+            if !(100.0..=10000.0).contains(&v) {
+                return Err(format!("size `{s}`: points go from 100 to 10000"));
+            }
+            Ok(Length::Points(v))
+        }
+    };
+    let (w, h) = s
+        .split_once(['x', 'X', '*'])
+        .ok_or_else(|| format!("size `{s}`: expected WIDTHxHEIGHT, e.g. 60%x50%"))?;
+    Ok((side(w)?, side(h)?))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
@@ -552,6 +632,7 @@ impl Default for Config {
             displays: vec![],
             workspaces: vec![],
             rules: vec![],
+            scratchpads: vec![],
             shortcuts: BTreeMap::new(),
         }
     }
@@ -610,6 +691,28 @@ impl Config {
                     "[[display]] `{}` needs exactly one of uuid, match_name, position",
                     d.name
                 )));
+            }
+        }
+        let mut names: Vec<&str> = Vec::new();
+        for (i, sp) in self.scratchpads.iter().enumerate() {
+            let what = format!("[[scratchpad]] #{}", i + 1);
+            let name = sp.name();
+            if sp.app.trim().is_empty() {
+                return Err(ConfigError::plain(format!("{what}: app is empty")));
+            }
+            if name.is_empty() || name.chars().any(char::is_whitespace) {
+                return Err(ConfigError::plain(format!(
+                    "{what}: name `{name}` must be one word"
+                )));
+            }
+            if names.contains(&name) {
+                return Err(ConfigError::plain(format!(
+                    "{what}: there is already a scratchpad named `{name}`"
+                )));
+            }
+            names.push(name);
+            if let Some(size) = &sp.size {
+                parse_size(size).map_err(|e| ConfigError::plain(format!("{what}: {e}")))?;
             }
         }
         self.compiled_rules()?;
@@ -673,12 +776,29 @@ impl Config {
             .collect()
     }
 
+    /// The built-in defaults plus each scratchpad's `key`: everything
+    /// `[shortcuts]` overrides.
+    pub fn default_bindings(&self, base: &Mods) -> Vec<(String, String)> {
+        let mut v = default_shortcuts(base);
+        for sp in &self.scratchpads {
+            if let Some(k) = sp.key.as_ref().filter(|k| !k.trim().is_empty()) {
+                v.push((k.trim().to_string(), format!("scratchpad {}", sp.name())));
+            }
+        }
+        v
+    }
+
+    pub fn scratchpad(&self, name: &str) -> Option<&ScratchpadConfig> {
+        self.scratchpads.iter().find(|s| s.name() == name)
+    }
+
     /// Effective hotkey bindings: defaults overlaid with `[shortcuts]`.
     pub fn bindings(&self) -> Result<Vec<(Chord, Command)>, ConfigError> {
         let base = self.modifier()?;
         let mut map: BTreeMap<Chord, Option<Command>> = BTreeMap::new();
-        for (k, v) in default_shortcuts(&base) {
-            let chord = Chord::parse_with(&k, &base).map_err(ConfigError::plain)?;
+        for (k, v) in self.default_bindings(&base) {
+            let chord = Chord::parse_with(&k, &base)
+                .map_err(|e| ConfigError::plain(format!("`{k}`: {e}")))?;
             map.insert(chord, Some(Command::parse(&v).map_err(ConfigError::plain)?));
         }
         for (k, v) in &self.shortcuts {
@@ -706,7 +826,7 @@ impl Config {
         let base = self.modifier()?;
         let current = self.bindings()?;
         let mut rows: Vec<(Command, BindingInfo)> = Vec::new();
-        for (chord, text) in default_shortcuts(&base) {
+        for (chord, text) in self.default_bindings(&base) {
             let cmd = Command::parse(&text).map_err(ConfigError::plain)?;
             let chord = Chord::parse_with(&chord, &base)
                 .map_err(ConfigError::plain)?
@@ -873,6 +993,14 @@ position = "right"
 # Every display has its own workspaces 1-9: mod-N shows workspace N on the
 # display you are working on.
 
+# A scratchpad: one key shows the app's window as a centered float on the
+# display you are working on (opening the app if needed); again hides it.
+# [[scratchpad]]
+# app = "com.googlecode.iterm2"
+# key = "mod-grave"
+# size = "60%x50%"           # percent of the display, or points: 1200x800
+# name = "term"              # for `scratchpad term`; defaults to app
+
 # [[rule]]
 # app = "com.apple.finder"   # glob on bundle id
 # title = "^Copy"            # regex on window title
@@ -986,6 +1114,63 @@ mod tests {
             .any(|(ch, cmd)| ch.display() == "cmd-ctrl-x" && *cmd == Command::Reload));
         assert!(Config::parse("[settings]\nmodifier = \"shift\"\n").is_err());
         assert!(Config::parse("[settings]\nmodifier = \"fn\"\n").is_err());
+    }
+
+    #[test]
+    fn scratchpads_parse_bind_and_validate() {
+        let c = Config::parse(
+            "[[scratchpad]]\napp = \"com.googlecode.iterm2\"\nkey = \"mod-grave\"\nsize = \"50%x700\"\nname = \"term\"\n\n[[scratchpad]]\napp = \"com.apple.Notes\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.scratchpads[1].name(), "com.apple.Notes");
+        let term = c.scratchpad("term").unwrap();
+        assert_eq!(term.size_in(2000.0, 1000.0), (1000.0, 700.0));
+        assert_eq!(
+            c.scratchpad("com.apple.Notes")
+                .unwrap()
+                .size_in(1000.0, 500.0),
+            (600.0, 300.0)
+        );
+        let bound = |c: &Config| {
+            c.bindings()
+                .unwrap()
+                .into_iter()
+                .find(|(_, cmd)| {
+                    *cmd == Command::Scratchpad {
+                        name: "term".into(),
+                    }
+                })
+                .map(|(ch, _)| ch.display())
+        };
+        assert_eq!(bound(&c).as_deref(), Some("alt-grave"));
+        let row = c
+            .binding_table()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.command == "scratchpad term")
+            .unwrap();
+        assert_eq!(row.default.as_deref(), Some("alt-grave"));
+        // [shortcuts] still wins.
+        let c = Config::parse(
+            "[[scratchpad]]\napp = \"x\"\nkey = \"mod-grave\"\n[shortcuts]\n\"mod-grave\" = \"none\"\n",
+        )
+        .unwrap();
+        assert!(c
+            .bindings()
+            .unwrap()
+            .iter()
+            .all(|(ch, _)| ch.key != "grave"));
+        for bad in [
+            "[[scratchpad]]\napp = \"x\"\nsize = \"big\"\n",
+            "[[scratchpad]]\napp = \"x\"\nsize = \"5%x50%\"\n",
+            "[[scratchpad]]\napp = \"x\"\nsize = \"20x500\"\n",
+            "[[scratchpad]]\napp = \"x\"\nname = \"two words\"\n",
+            "[[scratchpad]]\napp = \"x\"\n[[scratchpad]]\napp = \"x\"\n",
+            "[[scratchpad]]\napp = \"x\"\nkey = \"fn-x\"\n",
+            "[[scratchpad]]\napp = \"\"\n",
+        ] {
+            assert!(Config::parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
