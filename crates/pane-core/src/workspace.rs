@@ -21,6 +21,8 @@ pub struct Workspace {
     pub floating: Vec<WindowId>,
     /// Last focused window in this workspace.
     pub focused: Option<WindowId>,
+    /// Tiled window zoomed to fill the display (others stay behind it).
+    pub fullscreen: Option<WindowId>,
 }
 
 impl Workspace {

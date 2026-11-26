@@ -79,12 +79,12 @@ pub fn build(m: &Model) -> Snapshot {
             let ws = m.visible_ws(&d.id);
             let mut tiles = Vec::new();
             if let Some(ws) = ws {
-                for wid in m
-                    .tree
-                    .windows(ws.root)
-                    .into_iter()
-                    .chain(ws.floating.iter().copied())
-                {
+                // A zoomed workspace shows just the zoomed tile (and floats).
+                let tiled = match ws.fullscreen {
+                    Some(z) => vec![z],
+                    None => m.tree.windows(ws.root),
+                };
+                for wid in tiled.into_iter().chain(ws.floating.iter().copied()) {
                     let (Some(w), Some(r)) = (m.windows.get(&wid), m.desired.get(&wid)) else {
                         continue;
                     };

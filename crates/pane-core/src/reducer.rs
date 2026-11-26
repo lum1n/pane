@@ -621,6 +621,12 @@ fn discover(
             slot: claimed,
         };
         let root = m.ws(&ws).unwrap().root;
+        if !matches!(plan, Plan::Float(_)) {
+            // A new tile must be seen: end the zoom of its workspace.
+            if let Some(w) = m.ws_mut(&ws) {
+                w.fullscreen = None;
+            }
+        }
         match plan {
             Plan::Tile(at, weight) => {
                 let n = m.tree.insert_leaf(root, Leaf::Window(p.wid), at);
@@ -787,7 +793,18 @@ pub fn refresh_placements(m: &mut Model) {
 
 /// Take a window out of its workspace. With `ghost`, a tiled window's leaf
 /// stays in the tree (taking no space) so the window can come back to it.
+/// The window no longer fills its display (if it did).
+fn unzoom(m: &mut Model, wid: WindowId) {
+    for w in &mut m.workspaces {
+        if w.fullscreen == Some(wid) {
+            w.fullscreen = None;
+            m.layout_dirty = true;
+        }
+    }
+}
+
 fn detach_window(m: &mut Model, wid: WindowId, ghost: bool) -> Option<WorkspaceId> {
+    unzoom(m, wid);
     let w = m.windows.get(&wid)?.clone();
     let ws_id = w.workspace.clone();
     if let Some(node) = m.window_node(wid) {
@@ -844,6 +861,7 @@ fn forget_window(m: &mut Model, wid: WindowId, ghost: bool) -> Option<WorkspaceI
         m.window_node(wid),
     ) {
         if m.windows[&wid].mode == WindowMode::Tiled {
+            unzoom(m, wid);
             *m.tree.leaf_mut(node).unwrap() = Leaf::Slot(slot);
             if let Some(r) = m.placements.iter_mut().find(|r| r.live == Some(wid)) {
                 r.live = None;
@@ -1023,6 +1041,11 @@ fn focus_changed(m: &mut Model, wid: WindowId, frontmost: bool, fx: &mut Vec<Eff
     m.focus_display = d;
     if let Some(w) = m.ws_mut(&ws) {
         w.focused = Some(wid);
+        // Another window of a zoomed workspace got focus: show the tiles.
+        if w.fullscreen.is_some_and(|f| f != wid) {
+            w.fullscreen = None;
+            m.layout_dirty = true;
+        }
     }
     fx.push(Effect::Snapshot);
 }
@@ -1068,7 +1091,10 @@ fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
     m.focus_display = Some(d);
     m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
     m.layout_dirty = true;
-    let floats = m.ws(ws).unwrap().floating.clone();
+    let mut floats = m.ws(ws).unwrap().floating.clone();
+    if let Some(z) = m.ws(ws).unwrap().fullscreen {
+        floats.insert(0, z);
+    }
     for f in floats {
         if let Some(i) = m.windows.get(&f) {
             fx.push(Effect::Raise { pid: i.pid, wid: f });
@@ -1196,6 +1222,23 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
 // ---------------------------------------------------------------- commands
 
 fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
+    // Rearranging a workspace shows its tiles again.
+    if matches!(
+        cmd,
+        Command::Focus { .. }
+            | Command::Move { .. }
+            | Command::Resize { .. }
+            | Command::ToggleOrientation
+            | Command::ToggleLayout
+    ) {
+        if let Some(ws) = m.focused_ws_id() {
+            if let Some(w) = m.ws_mut(&ws) {
+                if w.fullscreen.take().is_some() {
+                    m.layout_dirty = true;
+                }
+            }
+        }
+    }
     if m.layout_dirty {
         fx.extend(reconcile::refresh_desired(m));
     }
@@ -1256,6 +1299,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             Reply::ok()
         }
         Command::ToggleFloat => cmd_toggle_float(m, fx),
+        Command::ToggleFullscreen => cmd_toggle_fullscreen(m, fx),
         Command::SwapWorkspaces => cmd_swap_workspaces(m, fx),
         Command::Reload => Reply::err("reload is handled by the runtime"),
         Command::ProfilePicker => {
@@ -1678,6 +1722,29 @@ fn cmd_swap_workspaces(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
     // Focus follows the focused windows to their new display.
     m.focus_display = Some(d2);
     m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
+    m.layout_dirty = true;
+    fx.push(Effect::PersistState);
+    fx.push(Effect::Snapshot);
+    Reply::ok()
+}
+
+fn cmd_toggle_fullscreen(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
+    let Some(wid) = m.focused_window() else {
+        return Reply::err("no focused window");
+    };
+    let w = m.windows[&wid].clone();
+    if w.mode != WindowMode::Tiled {
+        return Reply::err("only tiled windows can be zoomed to fullscreen");
+    }
+    let Some(ws) = m.ws_mut(&w.workspace) else {
+        return Reply::err("no workspace");
+    };
+    if ws.fullscreen == Some(wid) {
+        ws.fullscreen = None;
+    } else {
+        ws.fullscreen = Some(wid);
+        fx.push(Effect::Raise { pid: w.pid, wid });
+    }
     m.layout_dirty = true;
     fx.push(Effect::PersistState);
     fx.push(Effect::Snapshot);

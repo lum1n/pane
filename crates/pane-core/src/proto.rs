@@ -45,6 +45,8 @@ pub enum Command {
     ToggleOrientation,
     ToggleLayout,
     ToggleFloat,
+    /// Zoom the focused tile to fill its display (again to restore).
+    ToggleFullscreen,
     /// Swap the visible workspaces of the focused and the next display.
     SwapWorkspaces,
     Reload,
@@ -175,6 +177,7 @@ impl Command {
             "toggle-orientation" => Command::ToggleOrientation,
             "toggle-layout" => Command::ToggleLayout,
             "toggle-float" => Command::ToggleFloat,
+            "toggle-fullscreen" => Command::ToggleFullscreen,
             "swap-workspaces" => Command::SwapWorkspaces,
             "reload" => Command::Reload,
             "profile-picker" => Command::ProfilePicker,

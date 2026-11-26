@@ -1054,3 +1054,47 @@ fn stubborn_windows_still_follow_their_workspace() {
         s.frame(2)
     );
 }
+
+#[test]
+fn fullscreen_zooms_the_focused_tile() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.window(100, 2, "two", CENTER);
+    s.focus(100, 2);
+    let tiles = (s.frame(1), s.frame(2));
+    s.cmd(Command::ToggleFullscreen);
+    // Fills the display's visible frame; the other tile stays behind.
+    assert_eq!(s.frame(2), Rect::new(0.0, 30.0, 1920.0, 1050.0));
+    assert_eq!(s.frame(1), tiles.0);
+    let snap = pane_core::snapshot::build(&s.m);
+    let c = snap.displays.iter().find(|d| d.id == "C").unwrap();
+    assert_eq!(c.tiles.len(), 1, "icon shows only the zoomed tile");
+    // Survives switching away and back.
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.cmd(Command::Workspace { name: "1".into() });
+    assert_eq!(s.frame(2).w, 1920.0);
+    // Toggle again restores the tiles.
+    s.focus(100, 2);
+    s.cmd(Command::ToggleFullscreen);
+    assert_eq!((s.frame(1), s.frame(2)), tiles);
+    // Focusing a neighbour or a new window ends the zoom.
+    s.cmd(Command::ToggleFullscreen);
+    s.cmd(Command::Focus {
+        dir: Direction::Left,
+    });
+    assert_eq!((s.frame(1), s.frame(2)), tiles);
+    s.focus(100, 2);
+    s.cmd(Command::ToggleFullscreen);
+    s.window(100, 3, "three", CENTER);
+    assert!(s.frame(2).w < 1000.0, "a new tile ends the zoom");
+    // Closing the zoomed window clears it.
+    s.focus(100, 3);
+    s.cmd(Command::ToggleFullscreen);
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(3),
+    });
+    assert!(s.m.ws("C/1").unwrap().fullscreen.is_none());
+}

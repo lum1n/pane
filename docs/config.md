@@ -52,7 +52,7 @@ display = "right"                # optional: visible workspace of that display
 Defaults come in three layers, all built from `modifier`:
 
 - **base** (`mod`): focus, workspaces, display focus, toggles.
-- **move** (`mod` + Shift): move window, move to workspace, move workspace to display, reload, profile picker.
+- **move** (`mod` + Shift): move window, move to workspace, move workspace to display, fullscreen, reload, profile picker.
 - **resize** (`mod` + Control): resize.
 
 If the modifier already includes Shift or Control, those layers take the next free key, in the order Control, Option, Command, Shift. The two layers never collide. With `hyper` every modifier is already in use, so only the base layer gets defaults; bind the rest in `[shortcuts]` or in Settings.
@@ -103,6 +103,7 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `focus-display next\|prev` | |
 | `move-workspace-to-display next\|prev` | |
 | `toggle-orientation`, `toggle-layout`, `toggle-float` | |
+| `toggle-fullscreen` | zoom the focused tile to fill its display; ends when another window there is focused or a new tile opens |
 | `swap-workspaces` | swap with the next display |
 | `reload`, `profile-picker`, `open-editor` | |
 | `profile-apply NAME` | |

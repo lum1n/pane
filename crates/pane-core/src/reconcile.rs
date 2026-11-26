@@ -48,6 +48,14 @@ pub fn refresh_desired(m: &mut Model) -> Vec<Effect> {
                     None => {}
                 }
             }
+            // A zoomed tile fills the display's visible frame (no gaps).
+            if let Some(z) = ws.fullscreen.filter(|z| {
+                m.windows
+                    .get(z)
+                    .is_some_and(|w| w.mode == WindowMode::Tiled && !w.minimized)
+            }) {
+                desired.insert(z, d.visible_frame);
+            }
             overflow.extend(
                 out.overflow
                     .iter()

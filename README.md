@@ -35,6 +35,7 @@ All shortcuts are built on one **modifier** (`mod`, Option by default). Change i
 | `mod-s` | toggle split direction |
 | `mod-a` | tiles / accordion |
 | `mod-f` | float / tile |
+| `mod-shift-f` | fullscreen: zoom the focused tile to fill the display (again to restore) |
 | `mod-return` | swap what this display and the next one show |
 | `mod-shift-r` | reload config |
 | `mod-shift-p` | profile picker |

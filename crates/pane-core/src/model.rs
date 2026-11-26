@@ -230,6 +230,7 @@ impl Model {
                 root,
                 floating: vec![],
                 focused: ws.focused,
+                fullscreen: None,
             });
         }
         let migrate = |map: &BTreeMap<DisplayId, WorkspaceId>| -> BTreeMap<DisplayId, WorkspaceId> {
@@ -412,6 +413,7 @@ impl Model {
             root,
             floating: vec![],
             focused: None,
+            fullscreen: None,
         });
         id
     }
