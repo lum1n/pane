@@ -99,7 +99,7 @@ pub fn refresh_desired(m: &mut Model) -> Vec<Effect> {
             let Some(disp) = m.display(&ws.display) else {
                 continue;
             };
-            let visible = m.is_visible(&ws.id);
+            let visible = m.window_shown(w);
             if visible {
                 if w.mode == WindowMode::Floating {
                     desired.insert(w.id, w.float_frame.unwrap_or(w.actual));
@@ -287,7 +287,7 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
         let hidden: Vec<WindowId> = m
             .windows
             .values()
-            .filter(|w| !w.minimized && m.ws(&w.workspace).is_some_and(|ws| !m.is_visible(&ws.id)))
+            .filter(|w| !w.minimized && m.ws(&w.workspace).is_some() && !m.window_shown(w))
             .map(|w| w.id)
             .collect();
         for wid in &hidden {

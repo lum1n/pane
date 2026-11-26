@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::assign::{assign, next_free_name, AssignInput, WsInput};
+use crate::config::ScratchpadConfig;
 use crate::display::{display_for_rect, park_corners, rank_displays, DisplayRef, Position};
 use crate::drop::{self, DropTarget, Source};
 use crate::effect::Effect;
@@ -13,8 +14,9 @@ use crate::geometry::{neighbor_in_direction, Direction, Orientation, Point, Rect
 use crate::gesture::GesturePhase;
 use crate::identity::{match_windows, PlacementRecord, WindowFingerprint};
 use crate::model::{
-    AppInfo, Gesture, Model, PendingSlot, WindowInfo, WindowMode, FOLLOW_SUPPRESS_MS, GHOST_TTL_MS,
-    MAX_RECORDS_PER_APP, PENDING_SLOT_MS, RESYNC_DELAY_MS, UNRESPONSIVE_AFTER_MS, WATCHDOG_MS,
+    AppInfo, Gesture, Model, PendingLaunch, PendingSlot, WindowInfo, WindowMode,
+    FOLLOW_SUPPRESS_MS, GHOST_TTL_MS, MAX_RECORDS_PER_APP, PENDING_SLOT_MS, RESYNC_DELAY_MS,
+    UNRESPONSIVE_AFTER_MS, WATCHDOG_MS,
 };
 use crate::profile::{title_matches, Profile, ProfileDisplay};
 use crate::proto::{Command, QueryKind, Reply, UiRequest};
@@ -149,6 +151,7 @@ fn reduce_event(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
             m.config = *config;
             m.config_error = None;
             float_newly_floated_apps(m);
+            prune_scratchpads(m);
             m.last_sent.clear();
             m.layout_dirty = true;
             fx.push(Effect::UiRequest(UiRequest::info("Config reloaded")));
@@ -183,6 +186,18 @@ fn reduce_event(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
             error,
         } => {
             if !ok {
+                if let Some(p) = m
+                    .pending_launches
+                    .iter()
+                    .position(|p| p.request_id == request_id)
+                {
+                    let p = m.pending_launches.remove(p);
+                    fx.push(Effect::UiRequest(UiRequest::warn(format!(
+                        "Could not open {}: {}",
+                        p.bundle_id,
+                        error.clone().unwrap_or_else(|| "unknown error".into())
+                    ))));
+                }
                 let gone: Vec<PendingSlot> = m
                     .pending_slots
                     .iter()
@@ -530,6 +545,29 @@ fn discover(
                 why = Some("restored from the saved layout (floating)");
             }
         }
+        // A window of an app opened for a scratchpad becomes it; one opened
+        // by `summon` just goes where new windows go (the focused display).
+        let mut scratch_claim: Option<String> = None;
+        if target.is_none() && p.role == crate::rules::WindowRole::Standard {
+            if let Some(pos) = m.pending_launches.iter().position(|l| {
+                l.bundle_id.eq_ignore_ascii_case(&app.bundle_id)
+                    || l.bundle_id.eq_ignore_ascii_case(&app.name)
+            }) {
+                let l = m.pending_launches.remove(pos);
+                let sp = l
+                    .scratchpad
+                    .as_deref()
+                    .and_then(|n| m.config.scratchpad(n).cloned());
+                let here = m
+                    .focused_display()
+                    .and_then(|d| Some((m.visible.get(&d).cloned()?, m.display(&d).cloned()?)));
+                if let (Some(sp), Some((ws, disp))) = (sp, here) {
+                    target = Some((ws, Plan::Float(scratch_frame(&sp, &disp))));
+                    why = Some("scratchpad");
+                    scratch_claim = Some(sp.name().to_string());
+                }
+            }
+        }
         // 2. A profile slot waiting for this app (any time, not just right
         //    after applying: the profile stays until another is applied).
         let mut claimed: Option<crate::tree::AppSlot> = None;
@@ -689,6 +727,12 @@ fn discover(
         m.ghosts.remove(&p.wid);
         let standard = d.action == RuleAction::Tile || d.explicit;
         m.windows.insert(p.wid, info);
+        if let Some(name) = scratch_claim {
+            m.windows.get_mut(&p.wid).unwrap().reason = format!("scratchpad {name}");
+            m.scratch.insert(name, p.wid);
+            fx.push(Effect::Focus { pid, wid: p.wid });
+            set_focus(m, p.wid, fx);
+        }
         if let Some(ri) = record {
             m.placements[ri].live = Some(p.wid);
         } else if standard {
@@ -894,6 +938,9 @@ fn find_slot_for(
 }
 
 fn forget_window(m: &mut Model, wid: WindowId, ghost: bool) -> Option<WorkspaceId> {
+    // A scratchpad whose window is gone opens a new one next time.
+    m.scratch.retain(|_, w| *w != wid);
+    m.scratch_hidden.remove(&wid);
     // A window filling a profile slot gives the slot back: the layout keeps
     // the profile's shape and the app's next window returns there.
     if let (Some(slot), Some(node)) = (
@@ -1074,6 +1121,27 @@ fn focus_changed(
 ) {
     let Some(w) = m.windows.get(&wid) else { return };
     let ws = w.workspace.clone();
+    if m.scratch_hidden.contains(&wid) {
+        if !frontmost {
+            return;
+        }
+        m.os_focus = Some(wid);
+        // Cmd-Tab or a Dock click on a hidden scratchpad brings it here;
+        // late reports for the window we just hid are ignored.
+        let suppressed = m.now_ms < m.suppress_follow_until;
+        if let Some(name) = m.scratchpad_of(wid).map(str::to_string) {
+            if activated && !suppressed {
+                show_scratch(m, &name, wid, false, fx);
+                fx.push(Effect::Snapshot);
+                return;
+            }
+        }
+        match m.focused_window() {
+            Some(f) => focus_fx(m, f, fx),
+            None => fx.push(Effect::FocusDesktop),
+        }
+        return;
+    }
     if !frontmost {
         // A background app's own focus moved (often because we moved its
         // windows): remember it for that workspace, change nothing else.
@@ -1151,11 +1219,9 @@ fn first_window(m: &Model, ws: &str) -> Option<WindowId> {
                 .is_some_and(|i| !i.minimized && i.mode == WindowMode::Tiled)
         })
         .or_else(|| {
-            w.floating
-                .iter()
-                .rev()
-                .copied()
-                .find(|f| m.windows.get(f).is_some_and(|i| !i.minimized))
+            w.floating.iter().rev().copied().find(|f| {
+                !m.scratch_hidden.contains(f) && m.windows.get(f).is_some_and(|i| !i.minimized)
+            })
         })
 }
 
@@ -1183,7 +1249,11 @@ fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
     }
     for f in floats {
         // Raising a minimized window would restore it.
-        if let Some(i) = m.windows.get(&f).filter(|i| !i.minimized) {
+        if let Some(i) = m
+            .windows
+            .get(&f)
+            .filter(|i| !i.minimized && !m.scratch_hidden.contains(&f))
+        {
             fx.push(Effect::Raise { pid: i.pid, wid: f });
         }
     }
@@ -1194,7 +1264,7 @@ fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
             .filter(|f| {
                 m.windows
                     .get(f)
-                    .is_some_and(|i| i.workspace == ws && !i.minimized)
+                    .is_some_and(|i| i.workspace == ws && !i.minimized && m.window_shown(i))
             })
             .or_else(|| first_window(m, ws));
         match target {
@@ -1317,7 +1387,7 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
         let stray: Vec<WindowId> = m
             .windows
             .values()
-            .filter(|w| !w.minimized && m.is_visible(&w.workspace))
+            .filter(|w| !w.minimized && m.window_shown(w))
             .filter(|w| reconcile::mostly_hidden(m, &w.actual))
             .filter(|w| m.last_sent.get(&w.id).is_none_or(|s| s.settled))
             .map(|w| w.id)
@@ -1354,6 +1424,7 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
         m.pending_slots.retain(|p| p.deadline_ms > now);
         m.layout_dirty = true;
     }
+    m.pending_launches.retain(|p| p.deadline_ms > now);
     // Ghosts nobody came back for.
     let old: Vec<WindowId> = m
         .ghosts
@@ -1503,6 +1574,8 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         Command::Ping => Reply::data(&"pong"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
         Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
+        Command::Scratchpad { name } => cmd_scratchpad(m, &name, fx),
+        Command::Summon { app } => cmd_summon(m, &app, fx),
         Command::Palette => {
             fx.push(Effect::UiRequest(UiRequest::Palette));
             Reply::ok()
@@ -1525,6 +1598,13 @@ fn cmd_focus_window(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) -> Reply
     let (pid, ws, minimized) = (w.pid, w.workspace.clone(), w.minimized);
     if m.ws(&ws).is_none() {
         return Reply::err(format!("window {wid} has no workspace"));
+    }
+    if m.scratch_hidden.contains(&wid) {
+        if let Some(name) = m.scratchpad_of(wid).map(str::to_string) {
+            show_scratch(m, &name, wid, false, fx);
+            fx.push(Effect::Snapshot);
+            return Reply::ok();
+        }
     }
     if !m.is_visible(&ws) {
         show_workspace(m, &ws, fx, false);
@@ -1771,7 +1851,7 @@ fn cmd_cycle_workspace(m: &mut Model, which: Cycle, fx: &mut Vec<Effect>) -> Rep
         .filter(|w| {
             Some(&w.id) == current.as_ref()
                 || w.is_guest()
-                || !w.floating.is_empty()
+                || w.floating.iter().any(|f| !m.scratch_hidden.contains(f))
                 || m.tree
                     .windows(w.root)
                     .iter()
@@ -2120,7 +2200,7 @@ fn query(m: &Model, what: QueryKind) -> Reply {
                         .map(|x| x.display.clone())
                         .unwrap_or_default(),
                     mode: w.mode,
-                    visible: m.is_visible(&w.workspace),
+                    visible: m.window_shown(w),
                     frame: w.actual,
                     minimized: w.minimized,
                     stubborn: w.stubborn,
@@ -2651,4 +2731,288 @@ fn drop_window(m: &mut Model, wid: WindowId, target: &DropTarget, fx: &mut Vec<E
     m.layout_dirty = true;
     fx.push(Effect::PersistState);
     fx.push(Effect::Snapshot);
+}
+
+// ------------------------------------------------------ scratchpads, summon
+
+/// Centered frame of `size` on display `d`.
+fn scratch_frame(sp: &ScratchpadConfig, d: &crate::display::Display) -> Rect {
+    let a = d.visible_frame;
+    let (w, h) = sp.size_in(a.w, a.h);
+    Rect::new(a.center().x - w / 2.0, a.center().y - h / 2.0, w, h).fit_into(&a)
+}
+
+/// Does `w` belong to the app the user named: bundle id or app name,
+/// ignoring case.
+fn app_matches(m: &Model, w: &WindowInfo, app: &str) -> bool {
+    w.bundle_id.eq_ignore_ascii_case(app)
+        || m.apps
+            .get(&w.pid)
+            .is_some_and(|a| a.name.eq_ignore_ascii_case(app))
+}
+
+/// The window of `app` the user most likely means: the most recently
+/// focused standard window, not minimized if possible.
+fn best_window_of(m: &Model, app: &str, skip: &dyn Fn(WindowId) -> bool) -> Option<WindowId> {
+    m.windows
+        .values()
+        .filter(|w| w.role == crate::rules::WindowRole::Standard)
+        .filter(|w| app_matches(m, w, app) && !skip(w.id))
+        .max_by_key(|w| {
+            (
+                !w.minimized,
+                m.focus_seen.get(&w.id).copied().unwrap_or(0),
+                w.seq,
+            )
+        })
+        .map(|w| w.id)
+}
+
+/// The window to focus in `ws` once `except` leaves: the one focused most
+/// recently, else the first.
+fn previous_window(m: &Model, ws: &str, except: WindowId) -> Option<WindowId> {
+    m.windows
+        .values()
+        .filter(|w| w.id != except && w.workspace == ws && !w.minimized && m.window_shown(w))
+        .filter_map(|w| m.focus_seen.get(&w.id).map(|t| (*t, w.id)))
+        .max()
+        .map(|(_, w)| w)
+        .or_else(|| first_window(m, ws).filter(|w| *w != except))
+}
+
+/// Ask the shell to open `bundle`; `scratchpad` names the scratchpad its
+/// first new window becomes.
+fn launch(m: &mut Model, bundle: &str, scratchpad: Option<String>, fx: &mut Vec<Effect>) {
+    let request_id = m.next_request_id;
+    m.next_request_id += 1;
+    m.pending_launches.push(PendingLaunch {
+        request_id,
+        bundle_id: bundle.to_string(),
+        scratchpad,
+        deadline_ms: m.now_ms + PENDING_SLOT_MS,
+    });
+    fx.push(Effect::UiRequest(UiRequest::LaunchApp {
+        request_id,
+        bundle_id: bundle.to_string(),
+        args: vec![],
+    }));
+}
+
+/// Scratchpads that are gone from the config let go of their windows
+/// (a hidden one comes back where its workspace is).
+fn prune_scratchpads(m: &mut Model) {
+    let cfg = &m.config;
+    let gone: Vec<WindowId> = m
+        .scratch
+        .iter()
+        .filter(|(n, _)| cfg.scratchpad(n).is_none())
+        .map(|(_, w)| *w)
+        .collect();
+    m.scratch.retain(|n, _| cfg.scratchpad(n).is_some());
+    m.pending_launches.retain(|p| {
+        p.scratchpad
+            .as_ref()
+            .is_none_or(|n| cfg.scratchpad(n).is_some())
+    });
+    for w in gone {
+        if m.scratch_hidden.remove(&w) {
+            m.layout_dirty = true;
+        }
+    }
+}
+
+fn cmd_scratchpad(m: &mut Model, name: &str, fx: &mut Vec<Effect>) -> Reply {
+    let Some(sp) = m.config.scratchpad(name).cloned() else {
+        return Reply::err(format!(
+            "no scratchpad named `{name}` (add a [[scratchpad]] to config.toml)"
+        ));
+    };
+    if m.scratch
+        .get(name)
+        .is_some_and(|w| !m.windows.contains_key(w))
+    {
+        m.scratch.remove(name);
+    }
+    if let Some(wid) = m.scratch.get(name).copied() {
+        let w = &m.windows[&wid];
+        let here = m
+            .ws(&w.workspace)
+            .is_some_and(|x| Some(&x.display) == m.focused_display().as_ref());
+        let shown = m.window_shown(w) && !w.minimized;
+        if shown && here && m.focus_window == Some(wid) {
+            hide_scratch(m, wid, fx);
+        } else {
+            show_scratch(m, name, wid, false, fx);
+        }
+        return Reply::ok();
+    }
+    // Not set up yet: adopt the app's window if it has one, else open it.
+    let taken: BTreeSet<WindowId> = m.scratch.values().copied().collect();
+    if let Some(wid) = best_window_of(m, &sp.app, &|w| taken.contains(&w)) {
+        m.scratch.insert(name.to_string(), wid);
+        show_scratch(m, name, wid, true, fx);
+        return Reply::ok();
+    }
+    if !m
+        .pending_launches
+        .iter()
+        .any(|p| p.scratchpad.as_deref() == Some(name))
+    {
+        launch(m, &sp.app, Some(name.to_string()), fx);
+    }
+    Reply::ok()
+}
+
+/// Show scratchpad window `wid` as a float on the focused display's
+/// workspace and focus it. It keeps a frame the user gave it on that
+/// display unless `recenter`.
+fn show_scratch(m: &mut Model, name: &str, wid: WindowId, recenter: bool, fx: &mut Vec<Effect>) {
+    let Some(sp) = m.config.scratchpad(name).cloned() else {
+        return;
+    };
+    let Some(d) = m.focused_display() else { return };
+    let Some(ws) = m.visible.get(&d).cloned() else {
+        return;
+    };
+    let Some(disp) = m.display(&d).cloned() else {
+        return;
+    };
+    let w = m.windows[&wid].clone();
+    let keep = (!recenter && w.mode == WindowMode::Floating)
+        .then_some(w.float_frame)
+        .flatten()
+        .filter(|f| display_for_rect(&m.displays, f).is_some_and(|x| x.id == d));
+    let frame = keep.unwrap_or_else(|| scratch_frame(&sp, &disp));
+    // Re-add it so it is the newest float of the workspace (raised last).
+    detach_window(m, wid, false);
+    m.ws_mut(&ws).unwrap().floating.push(wid);
+    let wi = m.windows.get_mut(&wid).unwrap();
+    wi.workspace = ws;
+    wi.mode = WindowMode::Floating;
+    wi.float_frame = Some(frame);
+    wi.reason = format!("scratchpad {name}");
+    m.scratch_hidden.remove(&wid);
+    if w.minimized {
+        fx.push(Effect::Restore { pid: w.pid, wid });
+    } else {
+        fx.push(Effect::Focus { pid: w.pid, wid });
+    }
+    set_focus(m, wid, fx);
+    m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
+    refresh_record(m, wid);
+    m.layout_dirty = true;
+    fx.push(Effect::PersistState);
+}
+
+/// Toggle scratchpad window `wid` off: park it and give focus back to the
+/// window that had it before.
+fn hide_scratch(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) {
+    let w = m.windows[&wid].clone();
+    if w.mode == WindowMode::Tiled {
+        // Tiled meanwhile (toggle-float, a gesture): float it so its tile
+        // closes instead of leaving a hole.
+        let r = m.desired.get(&wid).copied().unwrap_or(w.actual);
+        detach_window(m, wid, false);
+        m.ws_mut(&w.workspace).unwrap().floating.push(wid);
+        let wi = m.windows.get_mut(&wid).unwrap();
+        wi.mode = WindowMode::Floating;
+        wi.float_frame = Some(r);
+    }
+    m.scratch_hidden.insert(wid);
+    if let Some(x) = m.ws_mut(&w.workspace) {
+        if x.focused == Some(wid) {
+            x.focused = None;
+        }
+    }
+    if m.focus_window == Some(wid) {
+        m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
+        match previous_window(m, &w.workspace, wid) {
+            Some(p) => focus_fx(m, p, fx),
+            None => {
+                m.focus_window = None;
+                fx.push(Effect::FocusDesktop);
+            }
+        }
+    }
+    m.layout_dirty = true;
+    fx.push(Effect::PersistState);
+    fx.push(Effect::Snapshot);
+}
+
+/// Bring `app`'s window to the focused workspace (next to the focused
+/// tile, or as a float if it floats) and focus it.
+fn cmd_summon(m: &mut Model, app: &str, fx: &mut Vec<Effect>) -> Reply {
+    let app = app.trim();
+    let Some(wid) = best_window_of(m, app, &|_| false) else {
+        // Open it: new windows go to the focused display anyway. A running
+        // app named by its name is opened by its bundle id.
+        let bundle = m
+            .apps
+            .values()
+            .find(|a| a.name.eq_ignore_ascii_case(app) || a.bundle_id.eq_ignore_ascii_case(app))
+            .map(|a| a.bundle_id.clone())
+            .unwrap_or_else(|| app.to_string());
+        if !m.pending_launches.iter().any(|p| p.bundle_id == bundle) {
+            launch(m, &bundle, None, fx);
+        }
+        return Reply::ok();
+    };
+    if let Some(name) = m.scratchpad_of(wid).map(str::to_string) {
+        show_scratch(m, &name, wid, false, fx);
+        return Reply::ok();
+    }
+    let Some(target) = m.focused_ws_id() else {
+        return Reply::err("no display");
+    };
+    let w = m.windows[&wid].clone();
+    if w.workspace != target {
+        detach_window(m, wid, false);
+        match w.mode {
+            WindowMode::Floating => {
+                m.ws_mut(&target).unwrap().floating.push(wid);
+                // Keep its size; bring it onto the target display.
+                let area = m
+                    .ws(&target)
+                    .and_then(|x| m.display(&x.display))
+                    .map(|d| d.visible_frame);
+                if let Some(a) = area {
+                    let f = w.float_frame.unwrap_or(w.actual);
+                    let on = display_for_rect(&m.displays, &f)
+                        .is_some_and(|d| d.visible_frame.intersection(&a).is_some());
+                    if !on || looks_parked(m, &f) {
+                        let r =
+                            Rect::new(a.center().x - f.w / 2.0, a.center().y - f.h / 2.0, f.w, f.h)
+                                .fit_into(&a);
+                        m.windows.get_mut(&wid).unwrap().float_frame = Some(r);
+                    }
+                }
+            }
+            WindowMode::Tiled => {
+                let at = default_insert(m, &target);
+                let root = m.ws(&target).unwrap().root;
+                if let Some(z) = m.ws_mut(&target) {
+                    z.fullscreen = None;
+                }
+                m.tree.insert_leaf(root, Leaf::Window(wid), at);
+            }
+        }
+        m.windows.get_mut(&wid).unwrap().workspace = target.clone();
+        refresh_record(m, wid);
+    } else if let Some(z) = m.ws_mut(&target) {
+        // Already here, maybe behind a zoomed tile.
+        if z.fullscreen.is_some_and(|f| f != wid) {
+            z.fullscreen = None;
+        }
+    }
+    if w.minimized {
+        fx.push(Effect::Restore { pid: w.pid, wid });
+    } else {
+        fx.push(Effect::Focus { pid: w.pid, wid });
+    }
+    set_focus(m, wid, fx);
+    m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
+    m.layout_dirty = true;
+    fx.push(Effect::PersistState);
+    fx.push(Effect::Snapshot);
+    Reply::ok()
 }

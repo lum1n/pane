@@ -102,7 +102,7 @@ pub fn build(m: &Model) -> Snapshot {
                     let (Some(w), Some(r)) = (m.windows.get(&wid), m.desired.get(&wid)) else {
                         continue;
                     };
-                    if w.minimized {
+                    if w.minimized || m.scratch_hidden.contains(&wid) {
                         continue;
                     }
                     tiles.push(SnapTile {
@@ -151,7 +151,10 @@ pub fn build(m: &Model) -> Snapshot {
                 .iter()
                 .filter(|x| m.windows.contains_key(x))
                 .count()
-                + w.floating.len();
+                + w.floating
+                    .iter()
+                    .filter(|f| !m.scratch_hidden.contains(f))
+                    .count();
             let visible = m.is_visible(&w.id);
             // Empty workspaces only show up while visible.
             if windows == 0 && !visible && !w.is_guest() {
