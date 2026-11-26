@@ -34,6 +34,12 @@ pub struct State {
     pub display_frames: BTreeMap<DisplayId, Rect>,
     #[serde(default)]
     pub display_names: BTreeMap<DisplayId, String>,
+    /// Profile applied last.
+    #[serde(default)]
+    pub active_profile: Option<String>,
+    /// Profile slot each window fills.
+    #[serde(default)]
+    pub window_slots: BTreeMap<WindowId, crate::tree::AppSlot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

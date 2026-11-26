@@ -44,3 +44,6 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Drag Mail onto a tile edge and save as "work". Quit Mail and apply: Mail launches into its tile within 30 s.
 - [ ] Applying with everything running launches nothing and closes nothing; a missing app gives a notice.
 - [ ] Save as Startup: the profile applies at launch.
+- [ ] Apply a profile, then switch workspaces, open and close windows, quit and reopen apps, restart Pane: the layout stays the profile's (the menu shows "Profile: name" with a checkmark) until you apply another.
+- [ ] An app in the profile that is not running leaves no gap; when it opens, its window goes to its slot.
+- [ ] No window ever ends up parked in the corner of a display while its workspace is shown.

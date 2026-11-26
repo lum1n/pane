@@ -164,10 +164,9 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
                     .filter(|p| p.request_id == request_id)
                     .cloned()
                     .collect();
+                // The slot stays in the layout (taking no space) for when
+                // the app is opened some other way.
                 m.pending_slots.retain(|p| p.request_id != request_id);
-                for p in &gone {
-                    remove_slot_leaf(m, &p.workspace, &p.bundle_id);
-                }
                 if let Some(p) = gone.first() {
                     fx.push(Effect::UiRequest(UiRequest::warn(format!(
                         "Could not open {}: {}",
@@ -496,23 +495,24 @@ fn discover(
                 why = Some("restored from the saved layout (floating)");
             }
         }
-        // 2. A profile slot waiting for this app.
-        if target.is_none() && d.action == RuleAction::Tile {
-            if let Some(pos) = m
-                .pending_slots
-                .iter()
-                .position(|s| s.bundle_id == app.bundle_id)
-            {
-                let s = m.pending_slots.remove(pos);
-                if let Some(node) = m.ws(&s.workspace).and_then(|w| {
-                    m.tree.find_leaf(
-                        w.root,
-                        |l| matches!(l, Leaf::Slot(sl) if sl.bundle_id == s.bundle_id),
-                    )
-                }) {
-                    target = Some((s.workspace.clone(), Plan::Replace(node)));
-                    why = Some("profile slot");
+        // 2. A profile slot waiting for this app (any time, not just right
+        //    after applying: the profile stays until another is applied).
+        let mut claimed: Option<crate::tree::AppSlot> = None;
+        if target.is_none()
+            && d.action == RuleAction::Tile
+            && p.role == crate::rules::WindowRole::Standard
+        {
+            if let Some((ws, node, slot)) = find_slot_for(m, &app.bundle_id, &p.title) {
+                if let Some(pos) = m
+                    .pending_slots
+                    .iter()
+                    .position(|s| s.bundle_id == app.bundle_id)
+                {
+                    m.pending_slots.remove(pos);
                 }
+                target = Some((ws, Plan::Replace(node)));
+                why = Some("profile slot");
+                claimed = Some(slot);
             }
         }
         // 3. A placement record from an earlier run.
@@ -527,6 +527,19 @@ fn discover(
                 });
                 let (home, name) = split_id(&r.workspace);
                 let (home, name) = (home.to_string(), name.to_string());
+                // A record from an older layout may name a display Pane no
+                // longer knows: then use the window's own display.
+                let home = if m.knows_display(&home) {
+                    home
+                } else {
+                    (if initial {
+                        display_for_rect(&m.displays, &p.frame).map(|x| x.id.clone())
+                    } else {
+                        None
+                    })
+                    .or_else(|| m.focused_display())
+                    .unwrap_or_default()
+                };
                 let ws = m.ensure_workspace(&home, &name);
                 if r.floating {
                     let f = r.float_frame.unwrap_or_else(|| sane_frame(m, &ws));
@@ -605,6 +618,7 @@ fn discover(
             float_frame: None,
             seq,
             reason: why.map(str::to_string).unwrap_or_else(|| d.reason.clone()),
+            slot: claimed,
         };
         let root = m.ws(&ws).unwrap().root;
         match plan {
@@ -792,7 +806,65 @@ fn detach_window(m: &mut Model, wid: WindowId, ghost: bool) -> Option<WorkspaceI
     Some(ws_id)
 }
 
+/// An unfilled profile slot for `bundle`: one whose title regex matches
+/// first, preferring a slot whose launch is pending, then visible
+/// workspaces, then any.
+fn find_slot_for(
+    m: &Model,
+    bundle: &str,
+    title: &str,
+) -> Option<(WorkspaceId, NodeId, crate::tree::AppSlot)> {
+    let mut cands: Vec<(u8, WorkspaceId, NodeId, crate::tree::AppSlot)> = Vec::new();
+    for w in &m.workspaces {
+        for n in m.tree.leaves(w.root) {
+            if let Some(Leaf::Slot(s)) = m.tree.leaf(n) {
+                if s.bundle_id != bundle {
+                    continue;
+                }
+                let title_ok = title_matches(s, title);
+                let pending = m
+                    .pending_slots
+                    .iter()
+                    .any(|p| p.workspace == w.id && p.bundle_id == bundle);
+                let rank =
+                    (!title_ok as u8) * 4 + (!pending as u8) * 2 + (!m.is_visible(&w.id) as u8);
+                cands.push((rank, w.id.clone(), n, s.clone()));
+            }
+        }
+    }
+    cands.sort_by_key(|c| c.0);
+    cands.into_iter().next().map(|(_, w, n, s)| (w, n, s))
+}
+
 fn forget_window(m: &mut Model, wid: WindowId, ghost: bool) -> Option<WorkspaceId> {
+    // A window filling a profile slot gives the slot back: the layout keeps
+    // the profile's shape and the app's next window returns there.
+    if let (Some(slot), Some(node)) = (
+        m.windows.get(&wid).and_then(|w| w.slot.clone()),
+        m.window_node(wid),
+    ) {
+        if m.windows[&wid].mode == WindowMode::Tiled {
+            *m.tree.leaf_mut(node).unwrap() = Leaf::Slot(slot);
+            if let Some(r) = m.placements.iter_mut().find(|r| r.live == Some(wid)) {
+                r.live = None;
+                r.last_wid = None;
+            }
+            let ws = m.windows[&wid].workspace.clone();
+            if let Some(w) = m.ws_mut(&ws) {
+                if w.focused == Some(wid) {
+                    w.focused = None;
+                }
+            }
+            m.windows.remove(&wid);
+            m.last_sent.remove(&wid);
+            m.desired.remove(&wid);
+            m.parked.remove(&wid);
+            if m.focus_window == Some(wid) {
+                m.focus_window = None;
+            }
+            return Some(ws);
+        }
+    }
     refresh_record(m, wid);
     if let Some(r) = m.placements.iter_mut().find(|r| r.live == Some(wid)) {
         r.live = None;
@@ -1050,18 +1122,6 @@ fn prune_ghosts(m: &mut Model, ws: &str) {
     }
 }
 
-fn remove_slot_leaf(m: &mut Model, ws: &str, bundle: &str) {
-    let Some(root) = m.ws(ws).map(|w| w.root) else {
-        return;
-    };
-    if let Some(n) = m.tree.find_leaf(
-        root,
-        |l| matches!(l, Leaf::Slot(s) if s.bundle_id == bundle),
-    ) {
-        m.tree.remove(n);
-    }
-}
-
 fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
     let now = m.now_ms;
     // Unresponsive apps.
@@ -1086,14 +1146,8 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
         .cloned()
         .collect();
     if !expired.is_empty() {
+        // Stop reserving space; the slot keeps waiting for the app.
         m.pending_slots.retain(|p| p.deadline_ms > now);
-        for p in &expired {
-            remove_slot_leaf(m, &p.workspace, &p.bundle_id);
-        }
-        warn(
-            fx,
-            format!("{} did not open a window in time", expired[0].bundle_id),
-        );
         m.layout_dirty = true;
     }
     // Ghosts nobody came back for.
@@ -2069,6 +2123,8 @@ pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply 
                 let w = m.windows.get_mut(&wid).unwrap();
                 w.mode = WindowMode::Tiled;
                 w.workspace = ws.clone();
+                w.slot = Some(slot.clone());
+                w.reason = "profile slot".into();
                 matched += 1;
             }
             None => {
@@ -2088,6 +2144,10 @@ pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply 
                     .is_some_and(|x| x.mode == WindowMode::Tiled)
             {
                 m.tree.insert_leaf(root, Leaf::Window(*w), InsertAt::End);
+                // Not part of the new profile.
+                if let Some(x) = m.windows.get_mut(w) {
+                    x.slot = None;
+                }
             }
         }
     }
@@ -2122,6 +2182,8 @@ pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply 
             format!("Profile `{}`: display `{d}` is not connected", p.name),
         );
     }
+    // The profile stays active until the user applies another one.
+    m.active_profile = Some(p.name.clone());
     m.last_sent.clear();
     m.layout_dirty = true;
     fx.push(Effect::PersistState);

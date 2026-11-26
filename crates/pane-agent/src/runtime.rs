@@ -519,7 +519,11 @@ impl Core {
             if set.is_empty() || *deadline <= now {
                 self.initial = None;
                 self.reduce(Event::InitialScanDone);
-                if let Some(name) = self.m.config.settings.startup_profile.clone() {
+                // The default profile applies only when none is active: an
+                // active profile (kept in state.json) stays until the user
+                // applies another one.
+                let startup = self.m.config.settings.startup_profile.clone();
+                if let Some(name) = startup.filter(|_| self.m.active_profile.is_none()) {
                     self.command(
                         Command::ProfileApply {
                             name: Some(name),

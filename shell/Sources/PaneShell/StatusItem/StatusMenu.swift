@@ -50,10 +50,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 }
             }
             menu.addItem(.separator())
-            let profiles = NSMenuItem(title: "Profiles", action: nil, keyEquivalent: "")
+            let profiles = NSMenuItem(title: s.active_profile.map { "Profile: \($0)" } ?? "Profiles", action: nil, keyEquivalent: "")
             let sub = NSMenu()
             for p in s.profiles {
-                sub.addItem(item("Apply “\(p)”", #selector(applyProfile(_:)), obj: p))
+                let i = item(p, #selector(applyProfile(_:)), obj: p)
+                i.state = s.active_profile == p ? .on : .off
+                i.toolTip = s.active_profile == p ? "Active: re-apply to reset the layout to this profile" : "Apply"
+                sub.addItem(i)
             }
             if !s.profiles.isEmpty { sub.addItem(.separator()) }
             sub.addItem(item("Save Current Desk as Profile…", #selector(saveProfile)))

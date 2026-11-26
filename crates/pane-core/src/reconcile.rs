@@ -17,6 +17,7 @@ const MAX_OVERFLOW_PASSES: usize = 8;
 pub fn refresh_desired(m: &mut Model) -> Vec<Effect> {
     let mut fx = Vec::new();
     m.layout_dirty = false;
+    repair(m);
     for _ in 0..MAX_OVERFLOW_PASSES {
         let mut desired = std::collections::BTreeMap::new();
         let mut slot_frames = Vec::new();
@@ -95,6 +96,91 @@ pub fn refresh_desired(m: &mut Model) -> Vec<Effect> {
         return fx;
     }
     fx
+}
+
+/// Enforce the model's invariants, whatever sequence of events led here:
+/// every window is in an existing workspace; a tiled window has exactly one
+/// leaf, in its own workspace's tree; a floating window is in exactly its
+/// own workspace's floating list. Returns how many windows were fixed.
+pub fn repair(m: &mut Model) -> usize {
+    let mut fixed = 0;
+    let wids: Vec<WindowId> = m.windows.keys().copied().collect();
+    for wid in wids {
+        let w = m.windows[&wid].clone();
+        // Leaves and floating entries for this window, anywhere.
+        let mut leaves: Vec<(crate::WorkspaceId, crate::tree::NodeId)> = Vec::new();
+        for ws in &m.workspaces {
+            if let Some(n) = m.tree.find_window(ws.root, wid) {
+                leaves.push((ws.id.clone(), n));
+            }
+        }
+        let mut ws_id = w.workspace.clone();
+        if m.ws(&ws_id).is_none() {
+            // Dangling workspace: adopt the one holding its leaf, else the
+            // visible workspace of the display it is on.
+            ws_id = leaves.first().map(|l| l.0.clone()).unwrap_or_else(|| {
+                let on = if crate::reducer::looks_parked(m, &w.actual) {
+                    None
+                } else {
+                    crate::display::display_for_rect(&m.displays, &w.actual).map(|d| d.id.clone())
+                };
+                on.or_else(|| m.focused_display())
+                    .and_then(|d| m.visible.get(&d).cloned())
+                    .or_else(|| m.workspaces.first().map(|x| x.id.clone()))
+                    .unwrap_or_default()
+            });
+            if m.ws(&ws_id).is_none() {
+                continue;
+            }
+            m.windows.get_mut(&wid).unwrap().workspace = ws_id.clone();
+            fixed += 1;
+        }
+        match w.mode {
+            WindowMode::Tiled => {
+                let mut kept = false;
+                for (lws, n) in &leaves {
+                    if *lws == ws_id && !kept {
+                        kept = true;
+                    } else {
+                        m.tree.remove(*n);
+                        fixed += 1;
+                    }
+                }
+                if !kept {
+                    let root = m.ws(&ws_id).unwrap().root;
+                    m.tree
+                        .insert_leaf(root, Leaf::Window(wid), crate::tree::InsertAt::End);
+                    fixed += 1;
+                }
+                for ws in &mut m.workspaces {
+                    let before = ws.floating.len();
+                    ws.floating.retain(|f| *f != wid);
+                    fixed += before - ws.floating.len();
+                }
+            }
+            WindowMode::Floating => {
+                for (_, n) in &leaves {
+                    m.tree.remove(*n);
+                    fixed += 1;
+                }
+                for ws in &mut m.workspaces {
+                    let mine = ws.id == ws_id;
+                    let count = ws.floating.iter().filter(|f| **f == wid).count();
+                    if mine && count == 0 {
+                        ws.floating.push(wid);
+                        fixed += 1;
+                    } else if (!mine && count > 0) || count > 1 {
+                        ws.floating.retain(|f| *f != wid);
+                        if mine {
+                            ws.floating.push(wid);
+                        }
+                        fixed += 1;
+                    }
+                }
+            }
+        }
+    }
+    fixed
 }
 
 fn float_window(m: &mut Model, wid: WindowId) {

@@ -59,6 +59,8 @@ struct Snapshot: Codable, Equatable {
     var focused_display: String?
     var focused_window: UInt32?
     var config_error: String?
+    /// Profile applied last; stays until another is applied.
+    var active_profile: String?
     var profiles: [String]
     var ax_trusted: Bool
 }

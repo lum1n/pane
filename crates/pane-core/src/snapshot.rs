@@ -13,6 +13,9 @@ pub struct Snapshot {
     pub focused_window: Option<u32>,
     #[serde(default)]
     pub config_error: Option<String>,
+    /// Profile applied last (stays until another is applied).
+    #[serde(default)]
+    pub active_profile: Option<String>,
     /// Filled in by the runtime.
     #[serde(default)]
     pub profiles: Vec<String>,
@@ -169,6 +172,7 @@ pub fn build(m: &Model) -> Snapshot {
         focused_display,
         focused_window: focused_window.map(|w| w.0),
         config_error: m.config_error.as_ref().map(|e| e.render()),
+        active_profile: m.active_profile.clone(),
         profiles: vec![],
         ax_trusted: true,
     }

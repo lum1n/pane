@@ -47,6 +47,9 @@ pub struct WindowInfo {
     pub seq: u64,
     /// Why it is tiled or floating (for `pane query windows`).
     pub reason: String,
+    /// The profile slot this window fills. When it closes, the slot comes
+    /// back so the app's next window returns to the same place.
+    pub slot: Option<AppSlot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -124,6 +127,8 @@ pub struct Model {
     pub restored_count: usize,
     /// Window leaves whose window is gone but may come back (unix ms since).
     pub ghosts: BTreeMap<WindowId, u64>,
+    /// Name of the profile applied last; stays until the user applies another.
+    pub active_profile: Option<String>,
     /// Floating windows from `state.json` waiting to be rediscovered.
     pub expected_floating: BTreeMap<WindowId, (WorkspaceId, Option<Rect>)>,
     pub now_ms: u64,
@@ -169,6 +174,7 @@ impl Model {
             restored_count: 0,
             ghosts: BTreeMap::new(),
             expected_floating: BTreeMap::new(),
+            active_profile: None,
             now_ms,
             gen: 0,
             seq: 0,
@@ -198,8 +204,18 @@ impl Model {
                 continue;
             }
             let root = m.tree.root_from_ser(&ws.tree);
-            for wid in m.tree.windows(root) {
-                m.ghosts.insert(wid, now_ms);
+            for leaf in m.tree.leaves(root) {
+                let Some(Leaf::Window(wid)) = m.tree.leaf(leaf).cloned() else {
+                    continue;
+                };
+                match state.window_slots.get(&wid) {
+                    // Windows that filled a profile slot come back as the
+                    // slot: their app's next window (any id) returns there.
+                    Some(slot) => *m.tree.leaf_mut(leaf).unwrap() = Leaf::Slot(slot.clone()),
+                    None => {
+                        m.ghosts.insert(wid, now_ms);
+                    }
+                }
             }
             for f in &ws.floating {
                 m.expected_floating.insert(f.wid, (id.clone(), f.frame));
@@ -244,6 +260,7 @@ impl Model {
         m.known_displays = state.displays.iter().cloned().collect();
         m.display_frames = state.display_frames.clone();
         m.display_names = state.display_names.clone();
+        m.active_profile = state.active_profile.clone();
         m
     }
 
@@ -278,6 +295,12 @@ impl Model {
             displays: self.displays.iter().map(|d| d.id.clone()).collect(),
             display_frames: self.display_frames.clone(),
             display_names: self.display_names.clone(),
+            active_profile: self.active_profile.clone(),
+            window_slots: self
+                .windows
+                .values()
+                .filter_map(|w| w.slot.clone().map(|s| (w.id, s)))
+                .collect(),
         }
     }
 
@@ -353,6 +376,15 @@ impl Model {
     /// workspace is on its home display, or on that display's host while
     /// it is unplugged.
     pub fn ensure_workspace(&mut self, home: &str, name: &str) -> WorkspaceId {
+        // Never create a workspace for a display Pane has never seen (an
+        // empty or stale id): it would be a hidden guest nobody can reach.
+        let fallback;
+        let home = if self.knows_display(home) {
+            home
+        } else {
+            fallback = self.focused_display().unwrap_or_default();
+            fallback.as_str()
+        };
         let id = ws_id(home, name);
         if self.ws(&id).is_some() {
             return id;
@@ -380,6 +412,14 @@ impl Model {
             focused: None,
         });
         id
+    }
+
+    /// Connected now, seen before, or owning workspaces.
+    pub fn knows_display(&self, id: &str) -> bool {
+        !id.is_empty()
+            && (self.display(id).is_some()
+                || self.display_frames.contains_key(id)
+                || self.workspaces.iter().any(|w| w.home == id))
     }
 
     /// Workspaces on `display` (its own first, by name, then guests).
@@ -423,7 +463,12 @@ impl Model {
                 .windows
                 .get(w)
                 .is_some_and(|x| !x.minimized && x.mode == WindowMode::Tiled),
-            Leaf::Slot(_) => true,
+            // A profile slot takes space only while its app is being launched;
+            // otherwise it waits invisibly for the app's next window.
+            Leaf::Slot(s) => self
+                .pending_slots
+                .iter()
+                .any(|p| p.bundle_id == s.bundle_id),
         }
     }
 

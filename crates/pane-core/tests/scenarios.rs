@@ -832,3 +832,150 @@ fn unbundled_apps_tile_and_float_apps_float() {
     s.window(100, 2, "Calculator 2", CENTER);
     assert_eq!(s.m.windows[&WindowId(2)].mode, WindowMode::Floating);
 }
+
+fn slot(bundle: &str) -> pane_core::tree::SerNode {
+    pane_core::tree::SerNode::Slot {
+        bundle_id: bundle.into(),
+        title: None,
+        launch_args: vec![],
+    }
+}
+
+fn two_up(a: &str, b: &str) -> pane_core::tree::SerNode {
+    pane_core::tree::SerNode::Container {
+        orientation: pane_core::Orientation::Horizontal,
+        layout: Default::default(),
+        weights: vec![1.0, 1.0],
+        children: vec![slot(a), slot(b)],
+    }
+}
+
+#[test]
+fn profile_stays_until_another_is_applied() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(200, "com.apple.Safari");
+    s.window(200, 2, "Web", CENTER);
+    let p = pane_core::profile::Profile {
+        name: "work".into(),
+        version: 1,
+        displays: vec![
+            pane_core::profile::ProfileDisplay {
+                display: "center".into(),
+                workspace: "1".into(),
+                tree: two_up("com.apple.mail", "com.apple.Safari"),
+                visible: true,
+            },
+            pane_core::profile::ProfileDisplay {
+                display: "center".into(),
+                workspace: "2".into(),
+                tree: slot("com.apple.Terminal"),
+                visible: false,
+            },
+        ],
+    };
+    s.cmd(Command::ProfileApply {
+        name: None,
+        profile: Some(p),
+    });
+    assert_eq!(s.m.active_profile.as_deref(), Some("work"));
+    assert_eq!(s.launches.len(), 2, "Mail and Terminal are launched");
+    let half = s.frame(2);
+    assert!(half.w < 1000.0, "Mail's slot is reserved while it launches");
+
+    // Mail never shows up: the slot stops taking space but is not deleted.
+    s.tick(31_000);
+    assert_eq!(s.frame(2).w, 1908.0);
+    // Switching workspaces and opening other windows does not lose it.
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.cmd(Command::Workspace { name: "1".into() });
+    s.launch(300, "com.other");
+    s.window(300, 3, "Other", CENTER);
+    assert!(
+        s.m.ws("C/2").is_some(),
+        "the profile's workspace 2 is kept while empty"
+    );
+    // Mail launches much later: it goes into its slot, left of Safari.
+    s.launch(100, "com.apple.mail");
+    s.window(100, 1, "Inbox", CENTER);
+    assert_eq!(s.m.windows[&WindowId(1)].workspace, "C/1");
+    assert!(
+        s.frame(1).x < s.frame(2).x,
+        "Mail is left of Safari as in the profile"
+    );
+    // Closing Mail gives the slot back; reopening returns to it.
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    s.window(100, 11, "Inbox", CENTER);
+    assert!(s.frame(11).x < s.frame(2).x);
+    // Terminal, when it opens, goes to workspace 2 of the profile.
+    s.launch(400, "com.apple.Terminal");
+    s.window(400, 4, "zsh", CENTER);
+    assert_eq!(s.m.windows[&WindowId(4)].workspace, "C/2");
+
+    // Restart Pane: still active, and slots survive new window ids.
+    pane_core::reducer::refresh_placements(&mut s.m);
+    let state: pane_core::state::State =
+        serde_json::from_str(&serde_json::to_string(&s.m.to_state()).unwrap()).unwrap();
+    let mut s2 = Sim::with(Model::from_state(Config::default(), &state, s.now));
+    assert_eq!(s2.m.active_profile.as_deref(), Some("work"));
+    s2.launch(101, "com.apple.mail");
+    s2.launch(201, "com.apple.Safari");
+    s2.window(201, 21, "Web", CENTER);
+    s2.window(101, 31, "Inbox", CENTER);
+    assert!(
+        s2.frame(31).x < s2.frame(21).x,
+        "after a reboot Mail is back left of Safari"
+    );
+}
+
+#[test]
+fn stale_placement_never_hides_a_window() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    // A record from an older layout naming a display Pane does not know.
+    s.m.placements.push(pane_core::identity::PlacementRecord {
+        fp: pane_core::identity::WindowFingerprint::new(
+            "com.google.Chrome",
+            "Docs",
+            None,
+            0,
+            Size::new(800.0, 600.0),
+        ),
+        workspace: "GONE-DISPLAY/2".into(),
+        anchor: vec![0],
+        weight: 1.0,
+        floating: false,
+        float_frame: None,
+        seen_at: s.now,
+        last_wid: None,
+        live: None,
+    });
+    s.launch(500, "com.google.Chrome");
+    s.window(500, 5, "Docs", CENTER);
+    let ws = s.m.windows[&WindowId(5)].workspace.clone();
+    assert!(ws.starts_with("C/"), "{ws}");
+    // The record said workspace 2: it is that workspace of the centre display.
+    s.cmd(Command::Workspace { name: "2".into() });
+    assert!(s.on_screen(5), "visible when its workspace is shown");
+    assert!(!s
+        .m
+        .workspaces
+        .iter()
+        .any(|w| w.home.is_empty() || w.home == "GONE-DISPLAY"));
+}
+
+#[test]
+fn repair_brings_back_windows_in_missing_workspaces() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    // Corrupt the model the way a bug might.
+    s.m.windows.get_mut(&WindowId(1)).unwrap().workspace = "nowhere/9".into();
+    s.m.layout_dirty = true;
+    s.tick(10);
+    assert!(s.on_screen(1));
+    assert_eq!(s.m.windows[&WindowId(1)].workspace, "C/1");
+}

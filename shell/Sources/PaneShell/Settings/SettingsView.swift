@@ -252,13 +252,15 @@ private struct GeneralSettingsView: View {
                         get: { Double(model.settings?.placement_memory_days ?? 30) },
                         set: { model.set("placement_memory_days", Int($0)) }
                     ), format: .number)
-                    Picker("Startup profile", selection: Binding(
+                    Picker("Default profile", selection: Binding(
                         get: { s.startup_profile ?? "" },
                         set: { $0.isEmpty ? model.clear("startup_profile") : model.set("startup_profile", $0) }
                     )) {
                         Text("None").tag("")
                         ForEach(PaneCore.shared.snapshot?.profiles ?? [], id: \.self) { Text($0).tag($0) }
                     }
+                    Text("Applied at launch when no profile is active. A profile you apply stays active, also across restarts, until you apply another.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Electron apps") {
                     TextField("Bundle IDs, comma separated", text: $electron)
