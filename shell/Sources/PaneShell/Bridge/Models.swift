@@ -66,9 +66,18 @@ struct Snapshot: Codable, Equatable {
     var desk_profiles: [String]?
     var ax_trusted: Bool
     var appearance: SnapAppearance?
+    var scratchpads: [SnapScratchpad]?
 }
 
 /// `snapshot::SnapAppearance`: focus border and dimming.
+struct SnapScratchpad: Codable, Equatable {
+    var name: String
+    var app: String
+    var key: String?
+    var size: String?
+    var shown: Bool
+}
+
 struct SnapAppearance: Codable, Equatable {
     var border_width: Double
     /// RGBA in 0...1; nil means the system accent colour.

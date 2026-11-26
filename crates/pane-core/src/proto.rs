@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::ScratchpadConfig;
 use crate::geometry::{Direction, Orientation, Rect};
 use crate::gesture::GesturePhase;
 use crate::profile::{Profile, ProfileEdit};
@@ -99,6 +100,10 @@ pub enum Command {
     SetSetting {
         key: String,
         value: serde_json::Value,
+    },
+    /// Replace every `[[scratchpad]]` in config.toml with these and reload.
+    SetScratchpads {
+        scratchpads: Vec<ScratchpadConfig>,
     },
     /// Bind `command` to `chord` instead of whatever it had; `chord: None`
     /// leaves it unbound. Handled by the runtime (edits `[shortcuts]`).

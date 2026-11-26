@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
+use pane_core::config::ScratchpadConfig;
 use pane_core::profile::Profile;
 use pane_core::state::{ParkedEntry, ParkedFile, State, STATE_VERSION};
 
@@ -161,6 +162,45 @@ pub fn set_setting(config_text: &str, key: &str, literal: Option<&str>) -> Strin
     edit_table(config_text, "settings", |k| k == key, &lines)
 }
 
+/// Replace every `[[scratchpad]]` table with `list`, appended at the end.
+/// Comments and blank lines after a removed table stay (they belong to
+/// what follows it).
+pub fn set_scratchpads(config_text: &str, list: &[ScratchpadConfig]) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut inside = false;
+    for l in config_text.lines() {
+        let t = l.trim();
+        if t.starts_with('[') {
+            inside = t == "[[scratchpad]]";
+            if inside {
+                continue;
+            }
+        }
+        if inside && !t.is_empty() && !t.starts_with('#') {
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    for sp in list {
+        out.push(String::new());
+        out.push("[[scratchpad]]".into());
+        if let Some(n) = &sp.name {
+            out.push(format!("name = {}", toml_string(n)));
+        }
+        out.push(format!("app = {}", toml_string(&sp.app)));
+        if let Some(k) = &sp.key {
+            out.push(format!("key = {}", toml_string(k)));
+        }
+        if let Some(z) = &sp.size {
+            out.push(format!("size = {}", toml_string(z)));
+        }
+    }
+    out.join("\n") + "\n"
+}
+
 pub fn toml_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -169,6 +209,27 @@ pub fn toml_string(s: &str) -> String {
 mod tests {
     use super::*;
     use pane_core::config::{Config, STARTER_CONFIG};
+
+    #[test]
+    fn scratchpads_are_replaced_and_config_stays_valid() {
+        let sp = |app: &str, key: Option<&str>| ScratchpadConfig {
+            name: None,
+            app: app.into(),
+            key: key.map(Into::into),
+            size: Some("50%x50%".into()),
+        };
+        let t = set_scratchpads(STARTER_CONFIG, &[sp("a", Some("mod-grave")), sp("b", None)]);
+        let c = Config::parse(&t).unwrap();
+        assert_eq!(c.scratchpads.len(), 2);
+        assert_eq!(c.scratchpads[0].key.as_deref(), Some("mod-grave"));
+        let t2 = set_scratchpads(&t, &[sp("c", None)]);
+        let c2 = Config::parse(&t2).unwrap();
+        assert_eq!(c2.scratchpads.len(), 1);
+        assert_eq!(c2.scratchpads[0].app, "c");
+        let t3 = set_scratchpads(&t2, &[]);
+        assert!(Config::parse(&t3).unwrap().scratchpads.is_empty());
+        assert!(!t3.contains("[[scratchpad]]\napp"));
+    }
 
     #[test]
     fn startup_profile_edit_keeps_config_valid() {
