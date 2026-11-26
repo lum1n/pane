@@ -25,6 +25,7 @@ gesture_modifier = ""            # keys for gestures; empty = same as `modifier`
 border_width = 2                 # border around the focused window, points; 0 = off
 border_color = "accent"          # "accent" (system accent) or "#rrggbb" / "#rrggbbaa"
 dim_unfocused = 0                # darken unfocused windows, 0 (off) to 0.8
+menu_bar_app_icons = true        # app icons on the tiles of the menu bar icon
 
 # Name displays. Each alias needs exactly one of: position, uuid, match_name.
 [[display]]
@@ -37,6 +38,11 @@ position = "left"                # left | center | right (by arrangement)
 [[workspace]]
 name = "1"
 display = ["left", "main"]
+
+# Names for workspaces, shown in the menu bar icon, the menu and the palette.
+[workspace_names]
+"1" = "web"                      # workspace 1 of every display
+"right:3" = "chat"               # workspace 3 of the right display (wins over "3")
 
 # Rules match by app (glob on bundle id) and/or title (regex).
 # Precedence: ignore > float/tile > automatic floating > tile.
@@ -94,7 +100,15 @@ A scratchpad's window floats on the workspace it was last shown on. Hidden, it i
 
 Workspaces are per display: each display has its own `1`-`9` (any name works with `workspace NAME`), shown with `mod-1..9` on the display you are on. `[[workspace]]` tables from older configs are accepted and ignored.
 
+`[workspace_names]` gives workspaces a name to show next to their number: in the menu bar icon (the workspace shown on the focused display, beside the desk), in the menu (`2 · web`) and in the palette, where you can search by it (`Workspace 2 · web`; windows say `workspace 2 (web)`). A key is a workspace (`"1"`, on every display) or `DISPLAY:WORKSPACE` with any display reference below (`"right:3"`, `"uuid:<UUID>:2"`); the display form wins. Names are 1-32 characters; the icon shows the first 16. Workspaces keep their number for commands, so `mod-3` and `workspace 3` still work.
+
 Commands that take a workspace accept `NAME` (on the focused display) or `DISPLAY:NAME`, e.g. `pane ws left:2`, `pane ws main:web`, or `pane ws uuid:<UUID>:3`.
+
+## Menu bar icon
+
+The icon draws every display in its arrangement with the visible workspace's tiles inside it; the focused tile is solid, dots under a display count its hidden workspaces with windows, and a bar marks the focused display. With `menu_bar_app_icons = true` (the default; **Settings > General > Menu bar**) each tile big enough for one shows its app's icon, and the icon is drawn in colour instead of as a monochrome template.
+
+Click a window's tile to focus that window (the same as `focus-window ID`). Clicking anywhere else, on the focused tile, or with the right button or Control opens the menu.
 
 ## Display references
 
@@ -159,8 +173,8 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `event` | When | Fields |
 |---|---|---|
 | `focus` | the focused window, its title, or its display/workspace changes | `window` (id; null when the desktop has focus), `app` (bundle id), `title`, `display` (UUID), `workspace` |
-| `workspace-shown` | a display shows another workspace, or a display appears | `display`, `display_name`, `workspace`, `previous` |
-| `workspaces` | the workspace list changes (also window counts and guests) | `workspaces`: `id`, `name`, `display`, `home`, `guest`, `label`, `target`, `visible`, `windows` |
+| `workspace-shown` | a display shows another workspace (or its `[workspace_names]` name changes), or a display appears | `display`, `display_name`, `workspace`, `workspace_title` (its name, or null), `previous` |
+| `workspaces` | the workspace list changes (also window counts and guests) | `workspaces`: `id`, `name`, `display`, `home`, `guest`, `label`, `title` (its `[workspace_names]` name, or null), `target`, `visible`, `windows` |
 | `displays` | a display is connected, unplugged or focused | `displays`: `id`, `name`, `is_main`, `rank`, `focused`; `focused` (UUID) |
 | `profile` | another profile becomes active | `active` |
 | `snapshot` | anything in `pane query snapshot` changes | `snapshot` |

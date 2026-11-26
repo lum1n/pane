@@ -524,6 +524,37 @@ impl Model {
         }
     }
 
+    /// The `[workspace_names]` name of a workspace, if it has one. A
+    /// `DISPLAY:NAME` key for its home display wins over a plain `NAME`.
+    pub fn workspace_title(&self, w: &Workspace) -> Option<String> {
+        let names = &self.config.workspace_names;
+        if names.is_empty() {
+            return None;
+        }
+        let scoped = names.iter().find(|(key, _)| {
+            let Some((d, name)) = key.rsplit_once(':') else {
+                return false;
+            };
+            if name.trim() != w.name {
+                return false;
+            }
+            let home = self
+                .config
+                .display_ref(d)
+                .resolve(&self.displays)
+                .map(|x| x.id == w.home);
+            // An unplugged home can still be named by its UUID.
+            home.unwrap_or_else(|| {
+                w.home
+                    .eq_ignore_ascii_case(d.trim().trim_start_matches("uuid:"))
+            })
+        });
+        scoped
+            .map(|(_, t)| t)
+            .or_else(|| names.get(&w.name))
+            .map(|t| t.trim().to_string())
+    }
+
     /// Is a leaf laid out? Ghosts, minimized and floating windows are not.
     pub fn leaf_present(&self, leaf: &Leaf) -> bool {
         match leaf {
