@@ -8,6 +8,7 @@ version = 1
 [settings]
 inner_gap = 6                    # points between tiles
 outer_gap = 6                    # points around the edge of each display
+smart_gaps = false               # no gaps on a workspace that shows a single tile
 default_layout = "tiles"         # or "accordion"
 placement_memory_days = 30       # how long to remember where windows were
 restore_placements = true        # put relaunched windows back in their tiles
@@ -32,6 +33,8 @@ name = "left"
 position = "left"                # left | center | right (by arrangement)
 # uuid = "37D8832A-..."          # `pane query displays` shows UUIDs
 # match_name = "DELL U2720Q"     # substring of the display name
+# inner_gap = 0                  # optional: overrides [settings] on this display
+# outer_gap = 0                  # optional: overrides [settings] on this display
 
 # Workspaces and their display preferences (most preferred first).
 [[workspace]]
@@ -60,6 +63,29 @@ name = "term"                    # optional, for `scratchpad term`; defaults to 
 "mod-q" = "none"                 # unbind a default
 "cmd-ctrl-t" = "toggle-float"    # absolute chords work too
 ```
+
+## Gaps
+
+`inner_gap` is the space between tiles, `outer_gap` the space between the tiles and the edges of the display's visible frame (below the menu bar, beside the Dock). Both are points, 0 to 200.
+
+`inner_gap` and `outer_gap` in a `[[display]]` alias override `[settings]` on the display that alias resolves to, so a laptop screen can have none and a 4K monitor more:
+
+```toml
+[[display]]
+name = "laptop"
+match_name = "Built-in"
+inner_gap = 0
+outer_gap = 0
+
+[[display]]
+name = "4k"
+uuid = "37D8832A-..."
+outer_gap = 12                   # inner_gap stays as in [settings]
+```
+
+Each gap is overridden on its own; if several aliases resolve to the same display, the first one that sets a gap wins for that gap. Aliases whose display is not connected do nothing.
+
+With `smart_gaps = true`, a workspace that shows a single tile gets no gaps at all: the window fills the visible frame. Several windows in one accordion count as one tile. As soon as a second tile appears, the display's gaps come back.
 
 ## Hotkey layers
 
