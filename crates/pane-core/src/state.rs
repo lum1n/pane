@@ -29,16 +29,22 @@ pub struct State {
     /// Displays connected when the state was written.
     #[serde(default)]
     pub displays: Vec<DisplayId>,
+    /// Last known frame of every display seen.
+    #[serde(default)]
+    pub display_frames: BTreeMap<DisplayId, Rect>,
+    #[serde(default)]
+    pub display_names: BTreeMap<DisplayId, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceState {
     pub id: WorkspaceId,
+    /// Home display; absent in files from before per-display workspaces.
     #[serde(default)]
-    pub prefs: Vec<String>,
+    pub home: Option<DisplayId>,
+    #[serde(default)]
+    pub name: Option<String>,
     pub display: DisplayId,
-    #[serde(default)]
-    pub last_display: Option<DisplayId>,
     pub tree: SerNode,
     #[serde(default)]
     pub floating: Vec<FloatingState>,

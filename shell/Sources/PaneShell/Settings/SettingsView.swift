@@ -252,7 +252,6 @@ private struct GeneralSettingsView: View {
                         get: { Double(model.settings?.placement_memory_days ?? 30) },
                         set: { model.set("placement_memory_days", Int($0)) }
                     ), format: .number)
-                    Toggle("Return workspaces when a display reconnects", isOn: toggle("return_workspaces_on_reconnect") { $0.return_workspaces_on_reconnect })
                     Picker("Startup profile", selection: Binding(
                         get: { s.startup_profile ?? "" },
                         set: { $0.isEmpty ? model.clear("startup_profile") : model.set("startup_profile", $0) }

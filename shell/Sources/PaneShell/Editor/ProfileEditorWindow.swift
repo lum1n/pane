@@ -18,6 +18,8 @@ final class EditorModel: ObservableObject {
     @Published var snapshot: Snapshot?
     @Published var selection: TileRef?
     @Published var status: String?
+    /// Selected workspace tab per display box (group key -> entry index).
+    @Published var selectedTab: [String: Int] = [:]
     private var undoStack: [Profile] = []
     private var redoStack: [Profile] = []
 
@@ -64,7 +66,7 @@ final class EditorModel: ObservableObject {
         var p = Profile(name: "Untitled", display: [])
         for (i, d) in (snapshot?.displays ?? []).sorted(by: { $0.rank < $1.rank }).enumerated() {
             p.display.append(ProfileDisplay(display: defaultRef(rank: i, count: snapshot?.displays.count ?? 1, id: d.id),
-                                            workspace: d.visible_workspace ?? "\(i + 1)", tree: .empty))
+                                            workspace: d.visible_workspace ?? "1", tree: .empty, visible: true))
         }
         replace(with: p)
         selection = nil
@@ -183,14 +185,39 @@ final class EditorModel: ObservableObject {
     }
 
     func addDisplay(ref: String) {
-        let used = Set(profile.display.map(\.workspace))
+        let used = Set(profile.display.filter { $0.display == ref }.map(\.workspace))
         let ws = (1...99).map(String.init).first { !used.contains($0) } ?? "1"
         perform(["op": "add_display", "display_ref": ref, "workspace": ws])
     }
 
-    func removeDisplay(_ i: Int) {
-        perform(["op": "remove_display", "display": i])
+    /// Add the next free workspace number to the display of entry `i`.
+    func addWorkspace(like i: Int, groupKey: String) {
+        guard let ref = profile.display[safe: i]?.display else { return }
+        let before = profile.display.count
+        addDisplay(ref: ref)
+        if profile.display.count > before {
+            selectedTab[groupKey] = profile.display.count - 1
+        }
+    }
+
+    func setVisible(_ i: Int) {
+        perform(["op": "set_visible", "display": i])
+    }
+
+    /// Remove profile entries (highest index first so indices stay valid).
+    func removeEntries(_ indices: [Int]) {
+        var p = profile
+        for i in indices.sorted(by: >) {
+            switch PaneCore.shared.edit(p, ["op": "remove_display", "display": i]) {
+            case let .success(np): p = np
+            case let .failure(e):
+                status = e.message
+                return
+            }
+        }
+        replace(with: p)
         selection = nil
+        selectedTab = [:]
     }
 }
 

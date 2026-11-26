@@ -191,6 +191,7 @@ impl Sim {
 
     fn focus(&mut self, pid: Pid, wid: u32) {
         self.ev(Event::FocusChanged {
+            frontmost: true,
             pid,
             wid: Some(WindowId(wid)),
         });
@@ -268,7 +269,7 @@ fn workspace_switch_parks_and_restores_exact_frames() {
     s.window(100, 1, "one", CENTER);
     s.window(100, 2, "two", CENTER);
     let before = (s.frame(1), s.frame(2));
-    let fx = s.cmd(Command::Workspace { name: "5".into() });
+    let fx = s.cmd(Command::Workspace { name: "2".into() });
     assert!(matches!(fx, Reply::Ok { .. }));
     assert!(!s.on_screen(1) && !s.on_screen(2));
     // Parked at the bottom-right corner of the centre display, size kept.
@@ -276,7 +277,7 @@ fn workspace_switch_parks_and_restores_exact_frames() {
     assert_eq!(s.frame(1).y, 1079.0);
     assert_eq!(s.frame(1).w, before.0.w);
     assert_eq!(s.m.parked.len(), 2);
-    s.cmd(Command::Workspace { name: "4".into() });
+    s.cmd(Command::Workspace { name: "1".into() });
     assert_eq!((s.frame(1), s.frame(2)), before);
     assert!(s.m.parked.is_empty());
 }
@@ -287,7 +288,7 @@ fn write_parked_precedes_parking_frames() {
     s.launch(100, "a");
     s.window(100, 1, "one", CENTER);
     let fx = s.ev(Event::Command {
-        cmd: Command::Workspace { name: "6".into() },
+        cmd: Command::Workspace { name: "3".into() },
         token: None,
     });
     let wp = fx
@@ -315,7 +316,7 @@ fn shutdown_unparks_everything() {
     s.launch(100, "a");
     s.window(100, 1, "one", CENTER);
     let orig = s.frame(1);
-    s.cmd(Command::Workspace { name: "5".into() });
+    s.cmd(Command::Workspace { name: "2".into() });
     assert!(!s.on_screen(1));
     s.ev(Event::Shutdown);
     assert_eq!(s.frame(1), orig);
@@ -440,7 +441,7 @@ fn move_window_across_display_edge() {
     s.cmd(Command::Move {
         dir: Direction::Right,
     });
-    assert_eq!(s.m.windows[&WindowId(2)].workspace, "7");
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "R/1");
     assert!(s.frame(2).x >= 1920.0, "now on the right display");
     assert_eq!(s.frame(1).w, 1908.0);
 }
@@ -453,29 +454,38 @@ fn unplug_and_replug_keeps_everything_reachable() {
     s.cmd(Command::FocusDisplay { which: Cycle::Next });
     assert_eq!(s.m.focus_display.as_deref(), Some("R"));
     s.window(100, 2, "right", CENTER);
-    s.cmd(Command::Workspace { name: "8".into() });
-    s.window(100, 3, "right8", CENTER);
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.window(100, 3, "right2", CENTER);
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "R/2");
     s.ev(Event::DisplaysChanged {
         displays: displays(&["L", "C"]),
     });
-    // 7-9 now live on C (rightmost remaining); C still shows 4.
-    assert_eq!(s.m.visible["C"], "4");
+    // R's workspaces are guests on C (its neighbour), hidden; C keeps C/1.
+    assert_eq!(s.m.visible["C"], "C/1");
+    assert_eq!(s.m.ws("R/2").unwrap().display, "C");
     assert!(s.on_screen(1));
     assert!(!s.on_screen(2) && !s.on_screen(3));
-    assert!(s.frame(2).x == 1919.0, "re-parked on the centre display");
-    // Still reachable by hotkey.
-    s.cmd(Command::Workspace { name: "8".into() });
+    // Reachable by name.
+    s.cmd(Command::FocusDisplay { which: Cycle::Next });
+    let r = s.cmd(Command::Workspace {
+        name: "uuid:R:2".into(),
+    });
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
     assert!(s.on_screen(3));
-    s.cmd(Command::Workspace { name: "4".into() });
+    // mod-1 on C (still focused) means C's own workspace 1.
+    assert_eq!(s.m.focus_display.as_deref(), Some("C"));
+    s.ev(Event::Command {
+        cmd: Command::Workspace { name: "1".into() },
+        token: None,
+    });
+    assert_eq!(s.m.visible["C"], "C/1");
     s.ev(Event::DisplaysChanged {
         displays: displays(&["L", "C", "R"]),
     });
-    assert_eq!(
-        s.m.visible["R"], "8",
-        "previously visible workspace comes back"
-    );
-    assert_eq!(s.m.visible["C"], "4");
+    assert_eq!(s.m.visible["R"], "R/2", "R shows what it showed before");
+    assert_eq!(s.m.visible["C"], "C/1");
     assert!(s.on_screen(3) && s.frame(3).x >= 1920.0);
+    assert!(!s.on_screen(2));
 }
 
 #[test]
@@ -483,13 +493,50 @@ fn move_and_swap_workspaces_between_displays() {
     let mut s = Sim::new();
     s.launch(100, "a");
     s.window(100, 1, "centre", CENTER);
+    s.focus(100, 1);
     s.cmd(Command::SwapWorkspaces);
-    assert_eq!(s.m.visible["R"], "4");
-    assert_eq!(s.m.visible["C"], "7");
+    // Names stay with displays; the window moved to R's visible workspace.
+    assert_eq!(s.m.visible["R"], "R/1");
+    assert_eq!(s.m.visible["C"], "C/1");
+    assert_eq!(s.m.windows[&WindowId(1)].workspace, "R/1");
     assert!(s.frame(1).x >= 1920.0);
+    // Move R's workspace to C: C already has a "1", so it becomes C/2.
     s.cmd(Command::MoveWorkspaceToDisplay { which: Cycle::Prev });
-    assert_eq!(s.m.visible["C"], "4");
+    assert_eq!(s.m.visible["C"], "C/2");
+    assert_eq!(s.m.windows[&WindowId(1)].workspace, "C/2");
     assert!(s.frame(1).x >= 0.0 && s.frame(1).x < 1920.0);
+    assert!(s.m.visible.contains_key("R"));
+}
+
+#[test]
+fn workspaces_are_per_display() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "c1", CENTER);
+    // mod-2 on the centre display switches the centre display only.
+    s.cmd(Command::Workspace { name: "2".into() });
+    assert_eq!(s.m.visible["C"], "C/2");
+    assert_eq!(s.m.visible["L"], "L/1");
+    assert_eq!(s.m.visible["R"], "R/1");
+    s.window(100, 2, "c2", CENTER);
+    // Focus the left display: its "2" is a different workspace.
+    s.cmd(Command::FocusDisplay { which: Cycle::Prev });
+    assert_eq!(s.m.focus_display.as_deref(), Some("L"));
+    s.cmd(Command::Workspace { name: "2".into() });
+    assert_eq!(s.m.visible["L"], "L/2");
+    assert_eq!(s.m.visible["C"], "C/2");
+    assert!(s.on_screen(2));
+    // Cycling on the centre display goes through workspaces with windows.
+    s.cmd(Command::FocusDisplay { which: Cycle::Next });
+    s.cmd(Command::CycleWorkspace { which: Cycle::Next });
+    assert_eq!(s.m.visible["C"], "C/1");
+    s.cmd(Command::CycleWorkspace { which: Cycle::Next });
+    assert_eq!(s.m.visible["C"], "C/2");
+    // Move the window to centre workspace 3 and back.
+    s.focus(100, 2);
+    s.cmd(Command::MoveToWorkspace { name: "3".into() });
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "C/3");
+    assert!(!s.on_screen(2));
 }
 
 #[test]
@@ -648,17 +695,20 @@ fn crash_leftovers_are_restored_for_ignored_and_counted() {
 fn focus_on_parked_window_switches_workspace_unless_just_closed() {
     let mut s = Sim::new();
     s.launch(100, "a");
+    s.launch(200, "b");
     s.window(100, 1, "one", CENTER);
-    s.cmd(Command::Workspace { name: "5".into() });
-    s.window(100, 2, "two", CENTER);
+    s.focus(100, 1);
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.window(200, 2, "two", CENTER);
+    s.focus(200, 2);
     s.now += 1000;
     s.focus(100, 1);
     assert_eq!(
-        s.m.visible["C"], "4",
-        "cmd-tab to a parked window shows its workspace"
+        s.m.visible["C"], "C/1",
+        "cmd-tab to a hidden window shows its workspace"
     );
     s.now += 1000;
-    s.cmd(Command::Workspace { name: "5".into() });
+    s.cmd(Command::Workspace { name: "2".into() });
     s.window(100, 3, "three", CENTER);
     s.focus(100, 3);
     s.now += 1000;
@@ -668,21 +718,64 @@ fn focus_on_parked_window_switches_workspace_unless_just_closed() {
     });
     s.focus(100, 1);
     assert_eq!(
-        s.m.visible["C"], "5",
-        "macOS picking a parked window after close does not switch"
+        s.m.visible["C"], "C/2",
+        "macOS picking a hidden window after close does not switch"
     );
 }
 
 #[test]
-fn config_reload_moves_workspaces() {
+fn switching_is_not_undone_by_stale_focus_reports() {
     let mut s = Sim::new();
+    s.launch(100, "a");
+    s.launch(200, "b");
+    s.window(100, 1, "one", CENTER);
+    s.focus(100, 1);
+    // Switch to an empty workspace: the desktop gets keyboard focus.
+    let fx = s.ev(Event::Command {
+        cmd: Command::Workspace { name: "2".into() },
+        token: None,
+    });
+    assert!(fx.iter().any(|f| matches!(f, Effect::FocusDesktop)));
+    // Long after, macOS re-reports the window it had focused: no jump back.
+    s.now += 5000;
+    s.focus(100, 1);
+    assert_eq!(s.m.visible["C"], "C/2");
+    // A background app reporting its own focus never switches.
+    s.window(200, 2, "bg", CENTER);
+    s.cmd(Command::Workspace { name: "3".into() });
+    s.now += 5000;
+    s.ev(Event::FocusChanged {
+        pid: 200,
+        wid: Some(WindowId(2)),
+        frontmost: false,
+    });
+    assert_eq!(s.m.visible["C"], "C/3");
+    // The user Cmd-Tabs to a different hidden window: follow it.
+    s.focus(200, 2);
+    assert_eq!(s.m.visible["C"], "C/2");
+}
+
+#[test]
+fn old_configs_and_state_still_load() {
+    let mut s = Sim::new();
+    // [[workspace]] is ignored now, but accepted.
     let cfg = Config::parse("[[workspace]]\nname = \"web\"\ndisplay = \"left\"\n").unwrap();
     s.ev(Event::ConfigLoaded {
         config: Box::new(cfg),
     });
-    assert_eq!(s.m.ws("web").unwrap().display, "L");
-    assert_eq!(s.m.visible["L"], "web");
-    assert!(s.m.visible.contains_key("R"));
+    assert_eq!(s.m.visible["L"], "L/1");
+    // A state.json from before per-display workspaces.
+    let old = r#"{"version":1,"workspaces":[{"id":"4","prefs":[],"display":"C","tree":{"type":"container","children":[{"type":"window","id":1}]}}],"visible":{"C":"4"}}"#;
+    let state: pane_core::state::State = serde_json::from_str(old).unwrap();
+    let mut s2 = Sim::with(Model::from_state(Config::default(), &state, s.now));
+    assert_eq!(s2.m.visible["C"], "C/4");
+    s2.launch(100, "a");
+    s2.ev(Event::WindowsDiscovered {
+        pid: 100,
+        windows: vec![probe(100, 1, "x", CENTER)],
+        initial: true,
+    });
+    assert_eq!(s2.m.windows[&WindowId(1)].workspace, "C/4");
 }
 
 #[test]

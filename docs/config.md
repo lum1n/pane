@@ -11,7 +11,6 @@ outer_gap = 6                    # points around the edge of each display
 default_layout = "tiles"         # or "accordion"
 placement_memory_days = 30       # how long to remember where windows were
 restore_placements = true        # put relaunched windows back in their tiles
-return_workspaces_on_reconnect = true
 startup_profile = "work"         # applied once the first scan finishes
 electron_bundle_ids = ["com.microsoft.VSCode"]   # use size/position/size when moving
 resize_step = 0.05
@@ -73,6 +72,12 @@ Pane tiles standard, resizable windows of regular (Dock) apps. It floats:
 
 `pane query windows` shows a `reason` for every window, for example `auto-float: not resizable`. `pane query apps` lists the apps Pane observes. If an app is missing from `pane query apps`, Pane has not seen a window from it.
 
+## Workspaces
+
+Workspaces are per display: each display has its own `1`-`9` (any name works with `workspace NAME`), shown with `mod-1..9` on the display you are on. `[[workspace]]` tables from older configs are accepted and ignored.
+
+Commands that take a workspace accept `NAME` (on the focused display) or `DISPLAY:NAME`, e.g. `pane ws left:2`, `pane ws main:web`, or `pane ws uuid:<UUID>:3`.
+
 ## Display references
 
 These forms work in `[[workspace]].display`, `[[rule]].display` and profile files:
@@ -92,8 +97,9 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `focus left\|right\|up\|down` | focus the neighbour, crossing displays |
 | `move left\|right\|up\|down` | move the window; at the edge, to the next display |
 | `resize width\|height ±N` | grow or shrink by N percent |
-| `workspace NAME` | show a workspace (created if new) |
-| `move-to-workspace NAME` | move the focused window |
+| `workspace NAME` | show workspace NAME of the focused display (or `DISPLAY:NAME`) |
+| `move-to-workspace NAME` | move the focused window there |
+| `cycle-workspace next\|prev` | next/previous workspace on the focused display |
 | `focus-display next\|prev` | |
 | `move-workspace-to-display next\|prev` | |
 | `toggle-orientation`, `toggle-layout`, `toggle-float` | |

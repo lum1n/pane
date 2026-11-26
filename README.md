@@ -18,6 +18,8 @@ On first launch, macOS asks for Accessibility access. Tiling starts as soon as y
 
 ## Use
 
+Every display has its own workspaces 1-9. They stay on their display: unplug a monitor and its workspaces wait, hidden, on the nearest remaining display (reachable from the menu), then go back when it returns. A new monitor plugged in at the same spot takes them over.
+
 All shortcuts are built on one **modifier** (`mod`, Option by default). Change it, or any single shortcut, in **Settings > Hotkeys**: tick the modifier keys you want, or click a shortcut and press a new one. Moving adds Shift and resizing adds Control; if Shift or Control is already part of the modifier, the next free key is used instead.
 
 | Keys | Action |
@@ -25,14 +27,15 @@ All shortcuts are built on one **modifier** (`mod`, Option by default). Change i
 | `mod-h/j/k/l` | focus left/down/up/right (crosses displays, including empty ones) |
 | `mod-shift-h/j/k/l` | move window (at the edge: to the next display) |
 | `mod-ctrl-h/l`, `mod-ctrl-k/j` | narrower/wider, shorter/taller by 5% |
-| `mod-1..9` | show workspace |
-| `mod-shift-1..9` | move window to workspace |
+| `mod-1..9` | show workspace 1-9 of the display you are on |
+| `mod-shift-1..9` | move window to that workspace (same display) |
+| `mod-[` / `mod-]` | previous/next workspace on this display |
 | `mod-,` / `mod-.` | focus previous/next display |
-| `mod-shift-,` / `mod-shift-.` | move workspace to previous/next display |
+| `mod-shift-,` / `mod-shift-.` | move this workspace to the previous/next display |
 | `mod-s` | toggle split direction |
 | `mod-a` | tiles / accordion |
 | `mod-f` | float / tile |
-| `mod-return` | swap workspaces with the next display |
+| `mod-return` | swap what this display and the next one show |
 | `mod-shift-r` | reload config |
 | `mod-shift-p` | profile picker |
 

@@ -43,8 +43,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 header.isEnabled = false
                 menu.addItem(header)
                 for w in s.workspaces where w.display == d.id {
-                    let title = w.windows > 0 ? "  \(w.name)  (\(w.windows))" : "  \(w.name)"
-                    let i = item(title, #selector(showWorkspace(_:)), obj: w.name)
+                    let title = w.windows > 0 ? "  \(w.label)  (\(w.windows))" : "  \(w.label)"
+                    let i = item(title, #selector(showWorkspace(_:)), obj: w.target)
                     i.state = w.visible ? .on : .off
                     menu.addItem(i)
                 }

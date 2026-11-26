@@ -28,6 +28,7 @@ pub struct SnapDisplay {
     pub visible_frame: Rect,
     pub is_main: bool,
     pub rank: usize,
+    /// Name of the workspace shown ("2").
     pub visible_workspace: Option<String>,
     pub focused: bool,
     pub tiles: Vec<SnapTile>,
@@ -48,8 +49,19 @@ pub struct SnapTile {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SnapWorkspace {
+    pub id: String,
+    /// Name within its display ("2").
     pub name: String,
+    /// Display it is on now.
     pub display: String,
+    /// Display it belongs to.
+    pub home: String,
+    /// Hosted here while its own display is unplugged.
+    pub guest: bool,
+    /// For menus: "2", or "DELL U2720Q: 2" for guests.
+    pub label: String,
+    /// Pass as `name` to the `workspace` command.
+    pub target: String,
     pub visible: bool,
     pub windows: usize,
 }
@@ -107,28 +119,50 @@ pub fn build(m: &Model) -> Snapshot {
                 visible_frame: d.visible_frame,
                 is_main: d.is_main,
                 rank: d.position_rank,
-                visible_workspace: ws.map(|w| w.id.to_string()),
+                visible_workspace: ws.map(|w| w.name.clone()),
                 focused: focused_display.as_deref() == Some(d.id.as_str()),
                 tiles,
             }
         })
         .collect();
-    let workspaces = m
-        .workspaces
-        .iter()
-        .map(|w| SnapWorkspace {
-            name: w.id.to_string(),
-            display: w.display.clone(),
-            visible: m.is_visible(&w.id),
-            windows: m
+    let mut workspaces: Vec<SnapWorkspace> = Vec::new();
+    for d in &m.displays {
+        for w in m.workspaces_on(&d.id) {
+            let windows = m
                 .tree
                 .windows(w.root)
                 .iter()
                 .filter(|x| m.windows.contains_key(x))
                 .count()
-                + w.floating.len(),
-        })
-        .collect();
+                + w.floating.len();
+            let visible = m.is_visible(&w.id);
+            // Empty workspaces only show up while visible.
+            if windows == 0 && !visible && !w.is_guest() {
+                continue;
+            }
+            let label = if w.is_guest() {
+                let home = m
+                    .display_names
+                    .get(&w.home)
+                    .cloned()
+                    .unwrap_or_else(|| "Unplugged display".into());
+                format!("{home}: {}", w.name)
+            } else {
+                w.name.clone()
+            };
+            workspaces.push(SnapWorkspace {
+                id: w.id.to_string(),
+                name: w.name.clone(),
+                display: w.display.clone(),
+                home: w.home.clone(),
+                guest: w.is_guest(),
+                label,
+                target: format!("uuid:{}:{}", w.home, w.name),
+                visible,
+                windows,
+            });
+        }
+    }
     Snapshot {
         displays,
         workspaces,

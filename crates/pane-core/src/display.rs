@@ -159,15 +159,42 @@ pub fn display_for_rect<'a>(displays: &'a [Display], rect: &Rect) -> Option<&'a 
     }
 }
 
-/// Where a window of `size` is parked on `display`: its top-left corner one
-/// point inside the display's bottom-right corner.
-pub fn park_rect(display: &Display, size: crate::Size) -> Rect {
-    Rect::new(
-        display.frame.max_x() - 1.0,
-        display.frame.max_y() - 1.0,
-        size.w,
-        size.h,
-    )
+/// The places a window of `size` can be parked on `display`: one point of
+/// it stays inside a bottom corner of the display, the rest hangs off below
+/// and to the side. (Top corners are not used: macOS may push windows back
+/// below the menu bar.) Order: bottom-right, bottom-left.
+pub fn park_corners(display: &Display, size: crate::Size) -> [Rect; 2] {
+    let f = &display.frame;
+    let b = f.max_y() - 1.0;
+    [
+        Rect::new(f.max_x() - 1.0, b, size.w, size.h),
+        Rect::new(f.x - size.w + 1.0, b, size.w, size.h),
+    ]
+}
+
+/// Where to park a window on `display`: the corner where it overlaps the
+/// other displays least, so it does not show up on a neighbour (bottom-right
+/// on ties). Keeping the window on its own display matters with "Displays
+/// have separate Spaces".
+pub fn park_rect(display: &Display, size: crate::Size, all: &[Display]) -> Rect {
+    let overlap = |r: &Rect| -> f64 {
+        all.iter()
+            .filter(|d| d.id != display.id)
+            .filter_map(|d| d.frame.intersection(r))
+            .map(|i| i.area())
+            .sum()
+    };
+    let corners = park_corners(display, size);
+    let mut best = corners[0];
+    let mut best_o = overlap(&best);
+    for c in &corners[1..] {
+        let o = overlap(c);
+        if o + 0.5 < best_o {
+            best = *c;
+            best_o = o;
+        }
+    }
+    best
 }
 
 #[cfg(test)]
@@ -224,6 +251,22 @@ mod tests {
         assert_eq!(id(DisplayRef::parse("right"), &lc).as_deref(), Some("C"));
         let lr = subset(&["L", "R"]);
         assert_eq!(id(DisplayRef::parse("right"), &lr).as_deref(), Some("R"));
+    }
+
+    #[test]
+    fn parking_avoids_a_taller_neighbour() {
+        let mut d = three();
+        // The right display hangs lower than the centre one.
+        d[2].frame = Rect::new(1920.0, 300.0, 1920.0, 1080.0);
+        let size = crate::Size::new(800.0, 600.0);
+        let r = park_rect(&d[1], size, &d);
+        assert_eq!(
+            (r.x, r.y),
+            (-799.0, 1079.0),
+            "bottom-left: nothing below-left of the centre"
+        );
+        let r = park_rect(&d[2], size, &d);
+        assert_eq!((r.x, r.y), (3839.0, 1379.0), "rightmost keeps bottom-right");
     }
 
     #[test]

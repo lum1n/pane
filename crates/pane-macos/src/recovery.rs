@@ -66,8 +66,11 @@ pub fn sweep_app(pid: i32, displays: &[(Rect, Rect)], known: &[(WindowId, Rect)]
     let mut n = 0;
     for w in app.elements("AXWindows") {
         let Some(f) = w.frame() else { continue };
+        // Either park corner (see pane_core::display::park_corners).
+        let near = |x: f64, y: f64| (f.x - x).abs() <= 4.0 && (f.y - y).abs() <= 4.0;
         let Some((_, vis)) = displays.iter().find(|(frame, _)| {
-            (f.x - (frame.max_x() - 1.0)).abs() <= 4.0 && (f.y - (frame.max_y() - 1.0)).abs() <= 4.0
+            let b = frame.max_y() - 1.0;
+            near(frame.max_x() - 1.0, b) || near(frame.x - f.w + 1.0, b)
         }) else {
             continue;
         };

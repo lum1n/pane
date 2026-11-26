@@ -27,8 +27,13 @@ fn version_one() -> u32 {
 pub struct ProfileDisplay {
     /// Display reference in short form (`left`, `main`, `uuid:...`, a config alias).
     pub display: String,
+    /// Workspace name on that display ("1", "2", "web").
     pub workspace: String,
     pub tree: SerNode,
+    /// Shown on its display after applying. Without any, a display shows
+    /// its first workspace in the profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub visible: bool,
 }
 
 impl Profile {
@@ -170,6 +175,11 @@ pub enum ProfileEdit {
         display_ref: String,
         workspace: String,
     },
+    /// Make entry `display` the one its display shows (others for the same
+    /// display stop being visible).
+    SetVisible {
+        display: usize,
+    },
     RemoveDisplay {
         display: usize,
     },
@@ -242,10 +252,13 @@ pub fn edit(profile: &Profile, op: &ProfileEdit) -> Result<Profile, String> {
     let mut p = profile.clone();
     match op {
         ProfileEdit::SetWorkspace { display, workspace } => {
+            if !crate::workspace::valid_name(workspace) {
+                return Err(format!("`{workspace}` is not a valid workspace name"));
+            }
             p.displays
                 .get_mut(*display)
                 .ok_or("no such display")?
-                .workspace = workspace.clone();
+                .workspace = workspace.trim().to_string();
             return Ok(p);
         }
         ProfileEdit::SetDisplay {
@@ -262,11 +275,37 @@ pub fn edit(profile: &Profile, op: &ProfileEdit) -> Result<Profile, String> {
             display_ref,
             workspace,
         } => {
+            if !crate::workspace::valid_name(workspace) {
+                return Err(format!("`{workspace}` is not a valid workspace name"));
+            }
+            if p.displays
+                .iter()
+                .any(|d| d.display == *display_ref && d.workspace == *workspace)
+            {
+                return Err(format!(
+                    "workspace {workspace} is already in this profile for that display"
+                ));
+            }
             p.displays.push(ProfileDisplay {
                 display: display_ref.clone(),
                 workspace: workspace.clone(),
                 tree: SerNode::empty(),
+                visible: false,
             });
+            return Ok(p);
+        }
+        ProfileEdit::SetVisible { display } => {
+            let r = p
+                .displays
+                .get(*display)
+                .ok_or("no such display")?
+                .display
+                .clone();
+            for (i, d) in p.displays.iter_mut().enumerate() {
+                if d.display == r {
+                    d.visible = i == *display;
+                }
+            }
             return Ok(p);
         }
         ProfileEdit::RemoveDisplay { display } => {
@@ -368,6 +407,7 @@ mod tests {
                 display: "left".into(),
                 workspace: "1".into(),
                 tree: SerNode::empty(),
+                visible: false,
             }],
         }
     }

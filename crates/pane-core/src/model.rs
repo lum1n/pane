@@ -5,13 +5,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::config::{Config, ConfigError};
-use crate::display::{Display, DisplayRef};
+use crate::display::Display;
 use crate::geometry::{Rect, Size};
 use crate::identity::PlacementRecord;
 use crate::rules::{Rule, WindowRole};
 use crate::state::{FloatingState, ParkedEntry, State, WorkspaceState, STATE_VERSION};
 use crate::tree::{AppSlot, Leaf, NodeId, Tree};
-use crate::workspace::Workspace;
+use crate::workspace::{name_order, ws_id, Workspace};
 use crate::{DisplayId, Pid, WindowId, WorkspaceId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -95,6 +95,10 @@ pub struct Model {
     pub displays: Vec<Display>,
     /// Display ids connected before the latest change (or in `state.json`).
     pub known_displays: BTreeSet<DisplayId>,
+    /// Last known frame of every display seen (to place unplugged ones).
+    pub display_frames: BTreeMap<DisplayId, Rect>,
+    /// Last known name of every display seen (labels for guests).
+    pub display_names: BTreeMap<DisplayId, String>,
     pub workspaces: Vec<Workspace>,
     pub visible: BTreeMap<DisplayId, WorkspaceId>,
     pub remembered_visible: BTreeMap<DisplayId, WorkspaceId>,
@@ -107,6 +111,8 @@ pub struct Model {
     pub placements: Vec<PlacementRecord>,
     pub focus_display: Option<DisplayId>,
     pub focus_window: Option<WindowId>,
+    /// Window macOS last reported as focused in the frontmost app.
+    pub os_focus: Option<WindowId>,
     pub last_sent: BTreeMap<WindowId, SentFrame>,
     /// Target frame per window from the last reconcile.
     pub desired: BTreeMap<WindowId, Rect>,
@@ -134,12 +140,14 @@ pub struct Model {
 impl Model {
     pub fn new(config: Config, now_ms: u64) -> Model {
         let rules = config.compiled_rules().unwrap_or_default();
-        let mut m = Model {
+        Model {
             config,
             rules,
             config_error: None,
             displays: vec![],
             known_displays: BTreeSet::new(),
+            display_frames: BTreeMap::new(),
+            display_names: BTreeMap::new(),
             workspaces: vec![],
             visible: BTreeMap::new(),
             remembered_visible: BTreeMap::new(),
@@ -151,6 +159,7 @@ impl Model {
             placements: vec![],
             focus_display: None,
             focus_window: None,
+            os_focus: None,
             last_sent: BTreeMap::new(),
             desired: BTreeMap::new(),
             slot_frames: vec![],
@@ -169,57 +178,72 @@ impl Model {
             suppress_follow_until: 0,
             shutting_down: false,
             initial_scan_done: false,
-        };
-        m.ensure_configured_workspaces();
-        m
+        }
     }
 
     /// Rebuild from `state.json`. Window leaves become ghosts until their
     /// windows are rediscovered. Displays arrive later via `DisplaysChanged`.
     pub fn from_state(config: Config, state: &State, now_ms: u64) -> Model {
         let mut m = Model::new(config, now_ms);
-        let configured: BTreeMap<String, Vec<DisplayRef>> =
-            m.config.workspace_prefs().into_iter().collect();
         for ws in &state.workspaces {
-            let root = match m.workspaces.iter().find(|w| w.id == ws.id).map(|w| w.root) {
-                Some(r) => {
-                    m.tree.fill_from_ser(r, &ws.tree);
-                    m.workspaces.retain(|w| w.id != ws.id);
-                    r
-                }
-                None => m.tree.root_from_ser(&ws.tree),
-            };
+            // Files from before per-display workspaces have no `home`: the
+            // workspace belongs to the display it was on.
+            let home = ws.home.clone().unwrap_or_else(|| ws.display.clone());
+            let name = ws
+                .name
+                .clone()
+                .unwrap_or_else(|| crate::workspace::split_id(&ws.id).1.to_string());
+            let id = ws_id(&home, &name);
+            if m.ws(&id).is_some() {
+                continue;
+            }
+            let root = m.tree.root_from_ser(&ws.tree);
             for wid in m.tree.windows(root) {
                 m.ghosts.insert(wid, now_ms);
             }
             for f in &ws.floating {
-                m.expected_floating.insert(f.wid, (ws.id.clone(), f.frame));
+                m.expected_floating.insert(f.wid, (id.clone(), f.frame));
             }
-            let (prefs, is_cfg) = match configured.get(ws.id.as_str()) {
-                Some(p) => (p.clone(), true),
-                None => (
-                    ws.prefs.iter().map(|p| m.config.display_ref(p)).collect(),
-                    false,
-                ),
-            };
             m.workspaces.push(Workspace {
-                id: ws.id.clone(),
-                prefs,
+                id,
+                home,
+                name,
                 display: ws.display.clone(),
                 root,
                 floating: vec![],
                 focused: ws.focused,
-                last_display: ws.last_display.clone(),
-                configured: is_cfg,
             });
         }
-        m.visible = state.visible.clone();
-        m.remembered_visible = state.remembered_visible.clone();
+        let migrate = |map: &BTreeMap<DisplayId, WorkspaceId>| -> BTreeMap<DisplayId, WorkspaceId> {
+            map.iter()
+                .map(|(d, w)| {
+                    (
+                        d.clone(),
+                        if w.contains('/') {
+                            w.clone()
+                        } else {
+                            ws_id(d, w)
+                        },
+                    )
+                })
+                .collect()
+        };
+        m.visible = migrate(&state.visible);
+        m.remembered_visible = migrate(&state.remembered_visible);
         m.placements = state.placements.clone();
+        for r in &mut m.placements {
+            if !r.workspace.contains('/') {
+                // Old global name: find the workspace it became.
+                if let Some(w) = m.workspaces.iter().find(|w| w.name == r.workspace.as_str()) {
+                    r.workspace = w.id.clone();
+                }
+            }
+        }
         m.focus_display = state.focus_display.clone();
         m.focus_window = state.focus_window;
         m.known_displays = state.displays.iter().cloned().collect();
-        m.ensure_configured_workspaces();
+        m.display_frames = state.display_frames.clone();
+        m.display_names = state.display_names.clone();
         m
     }
 
@@ -231,13 +255,9 @@ impl Model {
                 .iter()
                 .map(|w| WorkspaceState {
                     id: w.id.clone(),
-                    prefs: if w.configured {
-                        vec![]
-                    } else {
-                        w.prefs.iter().map(|p| p.to_short()).collect()
-                    },
+                    home: Some(w.home.clone()),
+                    name: Some(w.name.clone()),
                     display: w.display.clone(),
-                    last_display: w.last_display.clone(),
                     tree: self.tree.to_ser(w.root),
                     floating: w
                         .floating
@@ -256,54 +276,8 @@ impl Model {
             focus_display: self.focus_display.clone(),
             focus_window: self.focus_window,
             displays: self.displays.iter().map(|d| d.id.clone()).collect(),
-        }
-    }
-
-    /// Make sure every `[[workspace]]` from the config exists, in config
-    /// order, with current preferences.
-    pub fn ensure_configured_workspaces(&mut self) {
-        for (name, prefs) in self.config.workspace_prefs() {
-            let id = WorkspaceId::from(name.as_str());
-            if let Some(w) = self.workspaces.iter_mut().find(|w| w.id == id) {
-                if w.prefs != prefs {
-                    // Preferences changed: let the next assignment place it afresh.
-                    w.prefs = prefs;
-                    w.display = String::new();
-                }
-                w.configured = true;
-            } else {
-                let root = self
-                    .tree
-                    .new_root(Default::default(), self.config.settings.default_layout);
-                self.workspaces.push(Workspace {
-                    id,
-                    prefs,
-                    display: String::new(),
-                    root,
-                    floating: vec![],
-                    focused: None,
-                    last_display: None,
-                    configured: true,
-                });
-            }
-        }
-        // Configured ones first, in config order; others keep their order.
-        let order: Vec<String> = self
-            .config
-            .workspace_prefs()
-            .into_iter()
-            .map(|(n, _)| n)
-            .collect();
-        self.workspaces.sort_by_key(|w| {
-            order
-                .iter()
-                .position(|n| n == w.id.as_str())
-                .unwrap_or(usize::MAX)
-        });
-        for w in &mut self.workspaces {
-            if !order.iter().any(|n| n == w.id.as_str()) {
-                w.configured = false;
-            }
+            display_frames: self.display_frames.clone(),
+            display_names: self.display_names.clone(),
         }
     }
 
@@ -375,29 +349,71 @@ impl Model {
         self.seq
     }
 
-    /// Create a workspace if missing, on `display` (default: focused).
-    pub fn ensure_workspace(&mut self, name: &str, display: Option<DisplayId>) -> WorkspaceId {
-        let id = WorkspaceId::from(name);
-        if self.ws(name).is_some() {
+    /// Workspace `name` of display `home`, created if missing. A new
+    /// workspace is on its home display, or on that display's host while
+    /// it is unplugged.
+    pub fn ensure_workspace(&mut self, home: &str, name: &str) -> WorkspaceId {
+        let id = ws_id(home, name);
+        if self.ws(&id).is_some() {
             return id;
         }
-        let display = display
-            .or_else(|| self.focused_display())
-            .unwrap_or_default();
+        let display = if self.display(home).is_some() {
+            home.to_string()
+        } else {
+            self.workspaces
+                .iter()
+                .find(|w| w.home == home)
+                .map(|w| w.display.clone())
+                .or_else(|| self.focused_display())
+                .unwrap_or_else(|| home.to_string())
+        };
         let root = self
             .tree
             .new_root(Default::default(), self.config.settings.default_layout);
         self.workspaces.push(Workspace {
             id: id.clone(),
-            prefs: vec![DisplayRef::Uuid(display.clone())],
+            home: home.to_string(),
+            name: name.to_string(),
             display,
             root,
             floating: vec![],
             focused: None,
-            last_display: None,
-            configured: false,
         });
         id
+    }
+
+    /// Workspaces on `display` (its own first, by name, then guests).
+    pub fn workspaces_on(&self, display: &str) -> Vec<&Workspace> {
+        let mut v: Vec<&Workspace> = self
+            .workspaces
+            .iter()
+            .filter(|w| w.display == display)
+            .collect();
+        v.sort_by_key(|w| (w.is_guest(), w.home.clone(), name_order(&w.name)));
+        v
+    }
+
+    /// Resolve a workspace target as typed by the user: `2` (on the focused
+    /// display) or `<display>:2` (`left:2`, `main:web`, `uuid:...:3`, a config
+    /// alias). Unplugged displays can be named by their old position too.
+    pub fn resolve_target(&self, target: &str) -> Option<(DisplayId, String)> {
+        let target = target.trim();
+        match target.rsplit_once(':') {
+            Some((d, name)) if !d.is_empty() => {
+                let r = self.config.display_ref(d);
+                let home = r
+                    .resolve(&self.displays)
+                    .map(|x| x.id.clone())
+                    .or_else(|| {
+                        self.workspaces
+                            .iter()
+                            .find(|w| w.home.eq_ignore_ascii_case(d.trim_start_matches("uuid:")))
+                            .map(|w| w.home.clone())
+                    })?;
+                Some((home, name.trim().to_string()))
+            }
+            _ => Some((self.focused_display()?, target.to_string())),
+        }
     }
 
     /// Is a leaf laid out? Ghosts, minimized and floating windows are not.

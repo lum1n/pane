@@ -594,6 +594,7 @@ impl Core {
                         });
                     }
                 }
+                Effect::FocusDesktop => self.platform.focus_desktop(),
                 Effect::Raise { pid, wid } => {
                     if let Some(w) = self.workers.get(&pid) {
                         w.send(WorkerCmd::Raise { wid });

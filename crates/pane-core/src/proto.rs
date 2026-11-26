@@ -23,11 +23,18 @@ pub enum Command {
         axis: Orientation,
         delta: f64,
     },
+    /// Show workspace `name` of the focused display, or `<display>:<name>`.
     Workspace {
         name: String,
     },
+    /// Move the focused window to workspace `name` (same target syntax).
     MoveToWorkspace {
         name: String,
+    },
+    /// Show the next/previous workspace on the focused display (own
+    /// workspaces with windows, the visible one, and guests).
+    CycleWorkspace {
+        which: Cycle,
     },
     FocusDisplay {
         which: Cycle,
@@ -162,6 +169,7 @@ impl Command {
             "move-to-workspace" => Command::MoveToWorkspace {
                 name: arg(1)?.to_string(),
             },
+            "cycle-workspace" => Command::CycleWorkspace { which: cycle(1)? },
             "focus-display" => Command::FocusDisplay { which: cycle(1)? },
             "move-workspace-to-display" => Command::MoveWorkspaceToDisplay { which: cycle(1)? },
             "toggle-orientation" => Command::ToggleOrientation,

@@ -205,7 +205,17 @@ fn focused(st: &Rc<RefCell<State>>) {
         }
         id
     });
-    emit(st, Event::FocusChanged { pid, wid });
+    // Background apps also report focus changes (e.g. when we move their
+    // windows); the core only follows the frontmost app.
+    let frontmost = app.bool("AXFrontmost").unwrap_or(true);
+    emit(
+        st,
+        Event::FocusChanged {
+            pid,
+            wid,
+            frontmost,
+        },
+    );
 }
 
 fn on_notification(st: &Rc<RefCell<State>>, el: AxElement, n: &str) {

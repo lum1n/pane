@@ -69,6 +69,9 @@ pub enum Event {
     FocusChanged {
         pid: Pid,
         wid: Option<WindowId>,
+        /// The app is the active (frontmost) app.
+        #[serde(default = "yes")]
+        frontmost: bool,
     },
     WindowMinimized {
         pid: Pid,
@@ -128,4 +131,8 @@ impl Event {
             _ => None,
         }
     }
+}
+
+fn yes() -> bool {
+    true
 }

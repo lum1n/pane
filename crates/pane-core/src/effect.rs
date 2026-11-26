@@ -32,6 +32,8 @@ pub enum Effect {
         pid: Pid,
         wid: WindowId,
     },
+    /// Give keyboard focus to the desktop (the workspace shown is empty).
+    FocusDesktop,
     /// Raise and give keyboard focus.
     Focus {
         pid: Pid,

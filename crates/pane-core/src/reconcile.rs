@@ -87,7 +87,7 @@ pub fn refresh_desired(m: &mut Model) -> Vec<Effect> {
                 desired.insert(w.id, r);
             } else {
                 let size = park_size(m, w.id);
-                desired.insert(w.id, park_rect(disp, size));
+                desired.insert(w.id, park_rect(disp, size, &m.displays));
             }
         }
         m.desired = desired;

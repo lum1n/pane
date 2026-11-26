@@ -36,8 +36,19 @@ struct SnapDisplay: Codable, Equatable {
 }
 
 struct SnapWorkspace: Codable, Equatable {
+    var id: String
+    /// Name within its display ("2").
     var name: String
+    /// Display it is on now.
     var display: String
+    /// Display it belongs to.
+    var home: String
+    /// Hosted here while its own display is unplugged.
+    var guest: Bool
+    /// "2", or "DELL U2720Q: 2" for guests.
+    var label: String
+    /// Pass as `name` to the `workspace` command.
+    var target: String
     var visible: Bool
     var windows: Int
 }
@@ -129,6 +140,10 @@ struct ProfileDisplay: Codable, Equatable {
     var display: String
     var workspace: String
     var tree: SerNode
+    /// Shown on its display after applying (omitted when false).
+    var visible: Bool?
+
+    var isVisible: Bool { visible ?? false }
 }
 
 struct Profile: Codable, Equatable {

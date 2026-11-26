@@ -22,8 +22,10 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Mission Control shows parked windows on their own display.
 
 ## M3 Three displays
-- [ ] Workspaces 1-3 are on the left, 4-6 centre, 7-9 right.
-- [ ] Unplug right: 7-9 are hidden on the centre display, whose visible workspace stays the same; nothing is lost. Replug: 7-9 return, showing the one that was visible before.
+- [ ] `mod-2` on any display switches only that display; each display has its own 1-9; `mod-[`/`mod-]` cycle.
+- [ ] Switching to an empty workspace and typing does not type into a hidden window; switching is never undone a moment later.
+- [ ] No hidden window peeks out on a neighbouring display.
+- [ ] Unplug right: its workspaces are hidden on the centre display (listed in the menu as "<display>: N"), whose visible workspace stays the same; nothing is lost. Replug: they return, showing the one that was visible before.
 - [ ] Repeat with the left display, then unplug two; then sleep and wake.
 - [ ] `alt-l` from the centre's rightmost tile focuses the (empty) right display; `alt-shift-.` moves a workspace; `alt-return` swaps.
 
@@ -38,6 +40,7 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 
 ## M6 Profiles
 - [ ] Profile Editor > Capture Current shows all 3 displays correctly.
+- [ ] Add a second workspace tab to a display (+), put apps in both, mark one with ★; apply: both workspaces are filled and the ★ one is shown.
 - [ ] Drag Mail onto a tile edge and save as "work". Quit Mail and apply: Mail launches into its tile within 30 s.
 - [ ] Applying with everything running launches nothing and closes nothing; a missing app gives a notice.
 - [ ] Save as Startup: the profile applies at launch.

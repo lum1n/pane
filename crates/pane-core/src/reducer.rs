@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::assign::{assign, next_free_name, AssignInput, WsInput};
-use crate::display::{display_for_rect, park_rect, rank_displays, DisplayRef, Position};
+use crate::display::{display_for_rect, park_corners, rank_displays, DisplayRef, Position};
 use crate::effect::Effect;
 use crate::event::{Event, WindowProbe};
 use crate::geometry::{neighbor_in_direction, Direction, Orientation, Rect};
@@ -19,7 +19,7 @@ use crate::proto::{Command, QueryKind, Reply, UiRequest};
 use crate::reconcile;
 use crate::rules::{decide, Decision, RuleAction, WindowTraits};
 use crate::tree::{InsertAt, Leaf, MoveResult, NodeId, SerNode};
-use crate::workspace::Cycle;
+use crate::workspace::{split_id, valid_name, ws_id, Cycle};
 use crate::{Pid, WindowId, WorkspaceId};
 
 /// Quiet time after a user move before a tiled window snaps back.
@@ -75,9 +75,9 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
                 fx.push(Effect::Snapshot);
             }
         }
-        Event::FocusChanged { wid, .. } => {
+        Event::FocusChanged { wid, frontmost, .. } => {
             if let Some(wid) = wid {
-                focus_changed(m, wid, &mut fx);
+                focus_changed(m, wid, frontmost, &mut fx);
             }
         }
         Event::WindowMinimized { wid, minimized, .. } => {
@@ -99,13 +99,12 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
         }
         Event::DisplaysChanged { mut displays } => {
             rank_displays(&mut displays);
-            let prev = if m.displays.is_empty() {
-                m.known_displays.clone()
-            } else {
-                m.displays.iter().map(|d| d.id.clone()).collect()
-            };
             m.displays = displays;
-            reassign(m, &prev);
+            reassign(m);
+            for d in &m.displays {
+                m.display_frames.insert(d.id.clone(), d.frame);
+                m.display_names.insert(d.id.clone(), d.name.clone());
+            }
             m.known_displays = m.displays.iter().map(|d| d.id.clone()).collect();
             m.resync_at = Some(now_ms + RESYNC_DELAY_MS);
             m.layout_dirty = true;
@@ -124,21 +123,6 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
             m.rules = config.compiled_rules().unwrap_or_default();
             m.config = *config;
             m.config_error = None;
-            m.ensure_configured_workspaces();
-            // Empty workspaces the new config no longer names go away, even
-            // when visible, so the configured ones can take their display.
-            let stale: Vec<WorkspaceId> = m
-                .workspaces
-                .iter()
-                .filter(|w| {
-                    !w.configured && m.tree.leaves(w.root).is_empty() && w.floating.is_empty()
-                })
-                .map(|w| w.id.clone())
-                .collect();
-            m.visible.retain(|_, v| !stale.contains(v));
-            gc_workspaces(m);
-            let prev = m.displays.iter().map(|d| d.id.clone()).collect();
-            reassign(m, &prev);
             float_newly_floated_apps(m);
             m.last_sent.clear();
             m.layout_dirty = true;
@@ -290,7 +274,7 @@ fn mark_responsive(m: &mut Model, pid: Pid, fx: &mut Vec<Effect>) {
 
 // ---------------------------------------------------------------- displays
 
-fn reassign(m: &mut Model, prev: &BTreeSet<String>) {
+fn reassign(m: &mut Model) {
     if m.displays.is_empty() {
         return;
     }
@@ -299,34 +283,30 @@ fn reassign(m: &mut Model, prev: &BTreeSet<String>) {
         .iter()
         .map(|w| WsInput {
             id: w.id.clone(),
-            prefs: w.prefs.clone(),
-            current: Some(w.display.clone()).filter(|d| !d.is_empty()),
-            last_display: w.last_display.clone(),
+            home: w.home.clone(),
+            name: w.name.clone(),
         })
         .collect();
     let a = assign(&AssignInput {
         displays: &m.displays,
-        prev_displays: prev,
         workspaces: &inputs,
         prev_visible: &m.visible,
         remembered_visible: &m.remembered_visible,
-        return_on_reconnect: m.config.settings.return_workspaces_on_reconnect,
+        last_frames: &m.display_frames,
     });
-    for (w, d) in &a.evicted {
-        if let Some(ws) = m.ws_mut(w) {
-            ws.last_display.get_or_insert(d.clone());
-        }
+    for (old, new) in &a.rehome {
+        rehome_display(m, old, new);
     }
     for ws in &mut m.workspaces {
-        if let Some(d) = a.ws_display.get(&ws.id) {
+        let id = ws.id.clone();
+        if let Some(d) = a.ws_display.get(&id) {
             ws.display = d.clone();
         }
-        if ws.last_display.as_ref() == Some(&ws.display) {
-            ws.last_display = None;
-        }
     }
-    for (w, d) in &a.created {
-        m.ensure_workspace(w, Some(d.clone()));
+    for (id, d) in &a.created {
+        let (_, name) = split_id(id);
+        let name = name.to_string();
+        m.ensure_workspace(d, &name);
     }
     m.visible = a.visible;
     for (d, w) in &m.visible {
@@ -337,6 +317,23 @@ fn reassign(m: &mut Model, prev: &BTreeSet<String>) {
         .is_none_or(|d| m.display(d).is_none())
     {
         m.focus_display = m.main_display_id();
+    }
+}
+
+/// Every workspace of display `old` now belongs to `new` (a replaced
+/// monitor): rewrite ids everywhere they are referenced.
+fn rehome_display(m: &mut Model, old: &str, new: &str) {
+    let ids: Vec<(WorkspaceId, String)> = m
+        .workspaces
+        .iter()
+        .filter(|w| w.home == old)
+        .map(|w| (w.id.clone(), w.name.clone()))
+        .collect();
+    for (id, name) in ids {
+        rename_ws(m, &id, new, &name);
+    }
+    if let Some(v) = m.remembered_visible.remove(old) {
+        m.remembered_visible.entry(new.to_string()).or_insert(v);
     }
 }
 
@@ -358,9 +355,11 @@ fn traits<'a>(p: &'a WindowProbe, app: &'a AppInfo) -> WindowTraits<'a> {
 
 /// Is `r` sitting at some display's park corner?
 pub fn looks_parked(m: &Model, r: &Rect) -> bool {
-    m.displays
-        .iter()
-        .any(|d| park_rect(d, r.size()).origin_near(r, 4.0))
+    m.displays.iter().any(|d| {
+        park_corners(d, r.size())
+            .iter()
+            .any(|c| c.origin_near(r, 4.0))
+    })
 }
 
 enum Plan {
@@ -526,7 +525,9 @@ fn discover(
                 } else {
                     "remembered placement"
                 });
-                let ws = m.ensure_workspace(&r.workspace, None);
+                let (home, name) = split_id(&r.workspace);
+                let (home, name) = (home.to_string(), name.to_string());
+                let ws = m.ensure_workspace(&home, &name);
                 if r.floating {
                     let f = r.float_frame.unwrap_or_else(|| sane_frame(m, &ws));
                     target = Some((ws, Plan::Float(f)));
@@ -550,21 +551,30 @@ fn discover(
         let (ws, plan) = match target {
             Some(t) => t,
             None => {
-                let ws = d
-                    .workspace
+                // A rule's workspace is that workspace of the rule's display,
+                // else of the display the window opens on.
+                let rule_display = d
+                    .display
                     .as_ref()
-                    .map(|w| m.ensure_workspace(w, None))
-                    .or_else(|| d.display.as_ref().and_then(|r| visible_on_ref(m, r)))
-                    .or_else(|| {
-                        if initial {
-                            display_for_rect(&m.displays, &p.frame)
-                                .and_then(|d| m.visible.get(&d.id).cloned())
-                        } else {
-                            None
-                        }
-                    })
-                    .or_else(|| m.focused_ws_id())
-                    .or_else(|| m.workspaces.first().map(|w| w.id.clone()));
+                    .and_then(|r| r.resolve(&m.displays))
+                    .map(|x| x.id.clone());
+                let natural = if initial {
+                    display_for_rect(&m.displays, &p.frame).map(|x| x.id.clone())
+                } else {
+                    m.focused_display()
+                };
+                let ws = match &d.workspace {
+                    Some(name) => rule_display
+                        .clone()
+                        .or(natural.clone())
+                        .map(|dd| m.ensure_workspace(&dd, name)),
+                    None => rule_display
+                        .as_ref()
+                        .and_then(|dd| m.visible.get(dd).cloned()),
+                }
+                .or_else(|| natural.and_then(|dd| m.visible.get(&dd).cloned()))
+                .or_else(|| m.focused_ws_id())
+                .or_else(|| m.workspaces.first().map(|w| w.id.clone()));
                 let Some(ws) = ws else { continue };
                 let plan = if d.action == RuleAction::Float {
                     Plan::Float(sane_frame(m, &ws))
@@ -675,11 +685,6 @@ fn find_in_trees(m: &Model, wid: WindowId) -> Option<(WorkspaceId, NodeId)> {
     m.workspaces
         .iter()
         .find_map(|w| m.tree.find_window(w.root, wid).map(|n| (w.id.clone(), n)))
-}
-
-fn visible_on_ref(m: &Model, r: &DisplayRef) -> Option<WorkspaceId> {
-    let d = r.resolve(&m.displays)?;
-    m.visible.get(&d.id).cloned()
 }
 
 /// Next to the workspace's focused tiled window, else at the end.
@@ -906,17 +911,30 @@ fn frame_changed(m: &mut Model, wid: WindowId, frame: Rect, fx: &mut Vec<Effect>
     }
 }
 
-fn focus_changed(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) {
+fn focus_changed(m: &mut Model, wid: WindowId, frontmost: bool, fx: &mut Vec<Effect>) {
     let Some(w) = m.windows.get(&wid) else { return };
     let ws = w.workspace.clone();
+    if !frontmost {
+        // A background app's own focus moved (often because we moved its
+        // windows): remember it for that workspace, change nothing else.
+        if let Some(w) = m.ws_mut(&ws) {
+            w.focused = Some(wid);
+        }
+        return;
+    }
+    // macOS keeps reporting the window that had focus before we hid it;
+    // only a report of a *different* window is the user moving focus.
+    let repeat = m.os_focus == Some(wid);
+    m.os_focus = Some(wid);
     if !m.is_visible(&ws) {
-        if m.now_ms < m.suppress_follow_until {
-            if let Some(f) = m.focused_window() {
-                focus_fx(m, f, fx);
+        if repeat || m.now_ms < m.suppress_follow_until {
+            match m.focused_window() {
+                Some(f) => focus_fx(m, f, fx),
+                None => fx.push(Effect::FocusDesktop),
             }
             return;
         }
-        // Cmd-Tab or a Dock click on a parked window: show its workspace.
+        // Cmd-Tab or a Dock click on a hidden window: show its workspace.
         show_workspace(m, &ws, fx, false);
     }
     let d = m.ws(&ws).map(|w| w.display.clone());
@@ -932,6 +950,7 @@ fn focus_fx(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) {
     let Some(w) = m.windows.get(&wid) else { return };
     let (pid, ws) = (w.pid, w.workspace.clone());
     fx.push(Effect::Focus { pid, wid });
+    m.os_focus = Some(wid);
     m.focus_window = Some(wid);
     m.focus_display = m.ws(&ws).map(|w| w.display.clone());
     if let Some(w) = m.ws_mut(&ws) {
@@ -982,19 +1001,23 @@ fn show_workspace(m: &mut Model, ws: &str, fx: &mut Vec<Effect>, focus: bool) {
             .or_else(|| first_window(m, ws));
         match target {
             Some(t) => focus_fx(m, t, fx),
-            None => m.focus_window = None,
+            None => {
+                // Keyboard focus must not stay on a window we just hid.
+                m.focus_window = None;
+                fx.push(Effect::FocusDesktop);
+            }
         }
     }
     fx.push(Effect::PersistState);
     fx.push(Effect::Snapshot);
 }
 
-/// After an empty, unconfigured workspace stops being visible, drop it.
+/// Empty workspaces that are not shown are dropped (they come back on demand).
 fn gc_workspaces(m: &mut Model) {
     let dead: Vec<WorkspaceId> = m
         .workspaces
         .iter()
-        .filter(|w| !w.configured && !m.visible.values().any(|v| *v == w.id))
+        .filter(|w| !m.visible.values().any(|v| *v == w.id))
         .filter(|w| m.tree.leaves(w.root).is_empty() && w.floating.is_empty())
         .filter(|w| !m.pending_slots.iter().any(|p| p.workspace == w.id))
         .map(|w| w.id.clone())
@@ -1117,12 +1140,14 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         Command::Focus { dir } => cmd_focus(m, dir, fx),
         Command::Move { dir } => cmd_move(m, dir, fx),
         Command::Resize { axis, delta } => cmd_resize(m, axis, delta),
-        Command::Workspace { name } => {
-            let fd = m.focused_display();
-            let ws = m.ensure_workspace(&name, fd);
-            show_workspace(m, &ws, fx, true);
-            Reply::ok()
-        }
+        Command::Workspace { name } => match target_ws(m, &name) {
+            Ok(ws) => {
+                show_workspace(m, &ws, fx, true);
+                Reply::ok()
+            }
+            Err(e) => Reply::err(e),
+        },
+        Command::CycleWorkspace { which } => cmd_cycle_workspace(m, which, fx),
         Command::MoveToWorkspace { name } => cmd_move_to_workspace(m, &name, fx),
         Command::FocusDisplay { which } => {
             let Some(d) = cycle_display(m, which) else {
@@ -1381,11 +1406,13 @@ fn cmd_move_to_workspace(m: &mut Model, name: &str, fx: &mut Vec<Effect>) -> Rep
         return Reply::err("no focused window");
     };
     let src = m.windows[&wid].workspace.clone();
-    if src == name {
+    let target = match target_ws(m, name) {
+        Ok(t) => t,
+        Err(e) => return Reply::err(e),
+    };
+    if src == target {
         return Reply::ok();
     }
-    let fd = m.focused_display();
-    let target = m.ensure_workspace(name, fd);
     let floating = m.windows[&wid].mode == WindowMode::Floating;
     detach_window(m, wid, false);
     if floating {
@@ -1408,6 +1435,89 @@ fn cmd_move_to_workspace(m: &mut Model, name: &str, fx: &mut Vec<Effect>) -> Rep
     Reply::ok()
 }
 
+/// `2` or `left:2` -> workspace id (created if needed).
+fn target_ws(m: &mut Model, target: &str) -> Result<WorkspaceId, String> {
+    let (home, name) = m
+        .resolve_target(target)
+        .ok_or_else(|| format!("no display for `{target}`"))?;
+    if !valid_name(&name) {
+        return Err(format!("`{name}` is not a valid workspace name"));
+    }
+    Ok(m.ensure_workspace(&home, &name))
+}
+
+fn cmd_cycle_workspace(m: &mut Model, which: Cycle, fx: &mut Vec<Effect>) -> Reply {
+    let Some(d) = m.focused_display() else {
+        return Reply::err("no display");
+    };
+    let current = m.visible.get(&d).cloned();
+    let list: Vec<WorkspaceId> = m
+        .workspaces_on(&d)
+        .into_iter()
+        .filter(|w| {
+            Some(&w.id) == current.as_ref()
+                || w.is_guest()
+                || !w.floating.is_empty()
+                || m.tree
+                    .windows(w.root)
+                    .iter()
+                    .any(|x| m.windows.contains_key(x))
+        })
+        .map(|w| w.id.clone())
+        .collect();
+    if list.len() < 2 {
+        return Reply::ok();
+    }
+    let i = current
+        .and_then(|c| list.iter().position(|w| *w == c))
+        .unwrap_or(0);
+    let n = list.len();
+    let next = match which {
+        Cycle::Next => (i + 1) % n,
+        Cycle::Prev => (i + n - 1) % n,
+    };
+    let ws = list[next].clone();
+    show_workspace(m, &ws, fx, true);
+    Reply::ok()
+}
+
+/// Give workspace `from` a new home and name, updating every reference.
+fn rename_ws(m: &mut Model, from: &str, home: &str, name: &str) -> WorkspaceId {
+    let to = ws_id(home, name);
+    if let Some(w) = m.workspaces.iter_mut().find(|w| w.id == from) {
+        w.id = to.clone();
+        w.home = home.to_string();
+        w.name = name.to_string();
+    }
+    for w in m.windows.values_mut().filter(|w| w.workspace == from) {
+        w.workspace = to.clone();
+    }
+    for r in m.placements.iter_mut().filter(|r| r.workspace == from) {
+        r.workspace = to.clone();
+    }
+    for p in m.pending_slots.iter_mut().filter(|p| p.workspace == from) {
+        p.workspace = to.clone();
+    }
+    for (ws, _) in m.expected_floating.values_mut() {
+        if *ws == from {
+            *ws = to.clone();
+        }
+    }
+    for v in m
+        .visible
+        .values_mut()
+        .chain(m.remembered_visible.values_mut())
+    {
+        if *v == from {
+            *v = to.clone();
+        }
+    }
+    to
+}
+
+/// Move the focused display's workspace to the next/previous display. It
+/// keeps its name there if free (else takes the next free number); the
+/// source display shows another of its workspaces.
 fn cmd_move_ws_to_display(m: &mut Model, which: Cycle, fx: &mut Vec<Effect>) -> Reply {
     let Some(src) = m.focused_display() else {
         return Reply::err("no display");
@@ -1421,23 +1531,36 @@ fn cmd_move_ws_to_display(m: &mut Model, which: Cycle, fx: &mut Vec<Effect>) -> 
     let Some(ws) = m.visible.get(&src).cloned() else {
         return Reply::err("no workspace");
     };
-    {
-        let w = m.ws_mut(&ws).unwrap();
-        w.display = target.clone();
-        w.last_display = None;
-    }
-    m.visible.insert(target.clone(), ws.clone());
-    m.remembered_visible.insert(target.clone(), ws.clone());
-    // The source display needs something to show.
-    let replacement = m
+    let name = m.ws(&ws).unwrap().name.clone();
+    let taken: BTreeSet<WorkspaceId> = m
         .workspaces
         .iter()
-        .find(|w| w.display == src && w.id != ws)
+        .filter(|w| w.home == target)
+        .map(|w| WorkspaceId::from(w.name.as_str()))
+        .collect();
+    let new_name = if taken.contains(name.as_str()) {
+        next_free_name(&taken).to_string()
+    } else {
+        name
+    };
+    let moved = rename_ws(m, &ws, &target, &new_name);
+    m.ws_mut(&moved).unwrap().display = target.clone();
+    m.visible.insert(target.clone(), moved.clone());
+    m.remembered_visible.insert(target.clone(), moved);
+    let replacement = m
+        .workspaces_on(&src)
+        .into_iter()
+        .find(|w| !w.is_guest())
         .map(|w| w.id.clone())
         .unwrap_or_else(|| {
-            let taken = m.workspaces.iter().map(|w| w.id.clone()).collect();
-            let name = next_free_name(&taken);
-            m.ensure_workspace(&name, Some(src.clone()))
+            let taken: BTreeSet<WorkspaceId> = m
+                .workspaces
+                .iter()
+                .filter(|w| w.home == src)
+                .map(|w| WorkspaceId::from(w.name.as_str()))
+                .collect();
+            let n = next_free_name(&taken).to_string();
+            m.ensure_workspace(&src, &n)
         });
     m.visible.insert(src.clone(), replacement.clone());
     m.remembered_visible.insert(src, replacement);
@@ -1449,6 +1572,8 @@ fn cmd_move_ws_to_display(m: &mut Model, which: Cycle, fx: &mut Vec<Effect>) -> 
     Reply::ok()
 }
 
+/// Swap what the focused and the next display show. Workspace names stay
+/// with their displays; the windows trade places.
 fn cmd_swap_workspaces(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
     let Some(d1) = m.focused_display() else {
         return Reply::err("no display");
@@ -1462,13 +1587,32 @@ fn cmd_swap_workspaces(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
     let (Some(w1), Some(w2)) = (m.visible.get(&d1).cloned(), m.visible.get(&d2).cloned()) else {
         return Reply::err("no workspace");
     };
-    m.ws_mut(&w1).unwrap().display = d2.clone();
-    m.ws_mut(&w2).unwrap().display = d1.clone();
-    for (d, w) in [(&d1, &w2), (&d2, &w1)] {
-        m.visible.insert(d.clone(), w.clone());
-        m.remembered_visible.insert(d.clone(), w.clone());
+    let i1 = m.workspaces.iter().position(|w| w.id == w1).unwrap();
+    let i2 = m.workspaces.iter().position(|w| w.id == w2).unwrap();
+    let (r1, f1, fo1) = (
+        m.workspaces[i1].root,
+        m.workspaces[i1].floating.clone(),
+        m.workspaces[i1].focused,
+    );
+    let (r2, f2, fo2) = (
+        m.workspaces[i2].root,
+        m.workspaces[i2].floating.clone(),
+        m.workspaces[i2].focused,
+    );
+    m.workspaces[i1].root = r2;
+    m.workspaces[i1].floating = f2;
+    m.workspaces[i1].focused = fo2;
+    m.workspaces[i2].root = r1;
+    m.workspaces[i2].floating = f1;
+    m.workspaces[i2].focused = fo1;
+    for w in m.windows.values_mut() {
+        if w.workspace == w1 {
+            w.workspace = w2.clone();
+        } else if w.workspace == w2 {
+            w.workspace = w1.clone();
+        }
     }
-    // Focus follows the focused workspace to its new display.
+    // Focus follows the focused windows to their new display.
     m.focus_display = Some(d2);
     m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
     m.layout_dirty = true;
@@ -1611,12 +1755,15 @@ pub struct AppSummary {
 
 #[derive(Serialize)]
 pub struct WorkspaceSummary {
-    pub name: WorkspaceId,
+    pub id: WorkspaceId,
+    pub name: String,
+    /// Display it belongs to.
+    pub home: String,
+    /// Display it is on now (differs while `home` is unplugged).
     pub display: String,
     pub visible: bool,
     pub windows: usize,
     pub focused: Option<WindowId>,
-    pub configured: bool,
 }
 
 fn query(m: &Model, what: QueryKind) -> Reply {
@@ -1667,7 +1814,9 @@ fn query(m: &Model, what: QueryKind) -> Reply {
                 .workspaces
                 .iter()
                 .map(|w| WorkspaceSummary {
-                    name: w.id.clone(),
+                    id: w.id.clone(),
+                    name: w.name.clone(),
+                    home: w.home.clone(),
                     display: w.display.clone(),
                     visible: m.is_visible(&w.id),
                     windows: m
@@ -1678,7 +1827,6 @@ fn query(m: &Model, what: QueryKind) -> Reply {
                         .count()
                         + w.floating.len(),
                     focused: w.focused,
-                    configured: w.configured,
                 })
                 .collect();
             Reply::data(&v)
@@ -1729,28 +1877,32 @@ fn display_ref_for(m: &Model, idx: usize) -> String {
     DisplayRef::Position(pos).to_short()
 }
 
+/// Every workspace with tiled windows on each connected display (plus the
+/// visible one), marking which one each display shows.
 pub fn capture(m: &Model, name: &str) -> Profile {
     let mut displays = Vec::new();
     for (i, d) in m.displays.iter().enumerate() {
-        let Some(ws) = m.visible_ws(&d.id) else {
-            continue;
-        };
-        let ser = m.tree.to_ser(ws.root);
-        let counts = {
-            let mut c: BTreeMap<String, usize> = BTreeMap::new();
+        let shown = m.visible.get(&d.id);
+        for ws in m.workspaces_on(&d.id).into_iter().filter(|w| !w.is_guest()) {
+            let ser = m.tree.to_ser(ws.root);
+            let mut counts: BTreeMap<String, usize> = BTreeMap::new();
             for w in m.tree.windows(ws.root) {
                 if let Some(i) = m.windows.get(&w) {
-                    *c.entry(i.bundle_id.clone()).or_default() += 1;
+                    *counts.entry(i.bundle_id.clone()).or_default() += 1;
                 }
             }
-            c
-        };
-        let tree = to_slots(m, &ser, &counts).unwrap_or_else(SerNode::empty);
-        displays.push(ProfileDisplay {
-            display: display_ref_for(m, i),
-            workspace: ws.id.to_string(),
-            tree,
-        });
+            let tree = to_slots(m, &ser, &counts);
+            let visible = shown == Some(&ws.id);
+            if tree.is_none() && !visible {
+                continue;
+            }
+            displays.push(ProfileDisplay {
+                display: display_ref_for(m, i),
+                workspace: ws.name.clone(),
+                tree: tree.unwrap_or_else(SerNode::empty),
+                visible,
+            });
+        }
     }
     Profile {
         name: name.into(),
@@ -1819,6 +1971,8 @@ struct ApplySummary {
 pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply {
     let mut missing = Vec::new();
     let mut targets: Vec<(WorkspaceId, Vec<WindowId>)> = Vec::new();
+    // Per display: has an entry marked `visible` been applied yet?
+    let mut shown: BTreeMap<String, bool> = BTreeMap::new();
     for pd in &p.displays {
         let Some(d) = m
             .config
@@ -1829,15 +1983,27 @@ pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply 
             missing.push(pd.display.clone());
             continue;
         };
-        if targets.iter().any(|(w, _)| w == pd.workspace.as_str()) {
+        if !valid_name(&pd.workspace) {
+            missing.push(format!(
+                "{} (bad workspace name `{}`)",
+                pd.display, pd.workspace
+            ));
             continue;
         }
-        let ws = m.ensure_workspace(&pd.workspace, Some(d.clone()));
-        // Whatever the display showed before keeps its own display.
-        m.ws_mut(&ws).unwrap().display = d.clone();
-        m.ws_mut(&ws).unwrap().last_display = None;
-        m.visible.insert(d.clone(), ws.clone());
-        m.remembered_visible.insert(d.clone(), ws.clone());
+        let ws = m.ensure_workspace(&d, pd.workspace.trim());
+        if targets.iter().any(|(w, _)| *w == ws) {
+            continue;
+        }
+        // The entry marked visible (else the first one) is what the display shows.
+        let first_for_display = !shown.contains_key(&d);
+        if pd.visible || first_for_display {
+            if pd.visible || !shown.get(&d).copied().unwrap_or(false) {
+                m.visible.insert(d.clone(), ws.clone());
+                m.remembered_visible.insert(d.clone(), ws.clone());
+            }
+            let prev = shown.get(&d).copied().unwrap_or(false);
+            shown.insert(d.clone(), prev || pd.visible);
+        }
         let root = m.ws(&ws).unwrap().root;
         let orphans: Vec<WindowId> = m
             .tree

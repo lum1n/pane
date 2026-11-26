@@ -168,3 +168,21 @@ pub fn activate(pid: i32) {
         }
     })
 }
+
+/// Activate Finder, which gives keyboard focus to the desktop when none of
+/// its windows is in front.
+pub fn activate_finder() {
+    autoreleasepool(|_| unsafe {
+        let bundle = NSString::from_str("com.apple.finder");
+        let list: Option<Retained<AnyObject>> = msg_send![class!(NSRunningApplication), runningApplicationsWithBundleIdentifier: &*bundle];
+        let Some(list) = list else { return };
+        let count: usize = msg_send![&*list, count];
+        if count == 0 {
+            return;
+        }
+        let app: *mut AnyObject = msg_send![&*list, objectAtIndex: 0usize];
+        if !app.is_null() {
+            let _: bool = msg_send![app, activateWithOptions: 0usize];
+        }
+    })
+}

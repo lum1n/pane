@@ -43,6 +43,9 @@ pub trait Platform: Send + Sync + 'static {
         bindings: &[(Chord, Command)],
         tx: Sender<Command>,
     ) -> Result<Box<dyn HotkeyHandle>, String>;
+    /// Give keyboard focus to the desktop (Finder) so typing does not go to
+    /// a hidden window.
+    fn focus_desktop(&self) {}
 }
 
 /// The platform of this build.
@@ -150,6 +153,9 @@ pub mod mac {
         }
         fn emergency_restore(&self) -> usize {
             m::recovery::emergency_restore()
+        }
+        fn focus_desktop(&self) {
+            m::apps::activate_finder();
         }
         fn sweep_all(&self, known: &[(WindowId, Rect)]) -> usize {
             m::recovery::sweep_all(known)

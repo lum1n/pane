@@ -20,6 +20,8 @@ pub struct Config {
     pub settings: Settings,
     #[serde(default, rename = "display")]
     pub displays: Vec<DisplayAlias>,
+    /// Ignored: workspaces are per display now. Still accepted so configs
+    /// from earlier versions load.
     #[serde(default, rename = "workspace")]
     pub workspaces: Vec<WorkspaceConfig>,
     #[serde(default, rename = "rule")]
@@ -41,6 +43,7 @@ pub struct Settings {
     pub default_layout: ContainerLayout,
     pub placement_memory_days: u32,
     pub restore_placements: bool,
+    /// No effect: workspaces always return to their own display.
     pub return_workspaces_on_reconnect: bool,
     pub startup_profile: Option<String>,
     /// Apps that need the size/position/size double set.
@@ -511,6 +514,8 @@ pub fn default_shortcuts(base: &Mods) -> Vec<(String, String)> {
     add(b, "a", "toggle-layout".into());
     add(b, "f", "toggle-float".into());
     add(b, "return", "swap-workspaces".into());
+    add(b, "leftbracket", "cycle-workspace prev".into());
+    add(b, "rightbracket", "cycle-workspace next".into());
     add(mv, "r", "reload".into());
     add(mv, "p", "profile-picker".into());
     for i in 1..=9 {
@@ -579,21 +584,12 @@ impl Config {
                 )));
             }
         }
-        let mut seen = std::collections::BTreeSet::new();
-        for w in &self.workspaces {
-            if w.name.trim().is_empty() || !seen.insert(w.name.clone()) {
-                return Err(ConfigError::plain(format!(
-                    "duplicate or empty workspace name `{}`",
-                    w.name
-                )));
-            }
-        }
         self.compiled_rules()?;
         self.bindings()?;
         Ok(())
     }
 
-    /// Resolve a display name used in `[[workspace]]` or `[[rule]]`.
+    /// Resolve a display name used in `[[rule]]`, profiles or targets.
     pub fn display_ref(&self, s: &str) -> DisplayRef {
         if let Some(a) = self
             .displays
@@ -611,38 +607,6 @@ impl Config {
             }
         }
         DisplayRef::parse(s)
-    }
-
-    /// Configured workspaces with their display preferences. Without any
-    /// `[[workspace]]`, 1-3 prefer the left display, 4-6 the centre and 7-9
-    /// the right one (all of them collapse onto one display when only one is
-    /// connected).
-    pub fn workspace_prefs(&self) -> Vec<(String, Vec<DisplayRef>)> {
-        if self.workspaces.is_empty() {
-            return (1..=9)
-                .map(|i| {
-                    let p = match i {
-                        1..=3 => Position::Left,
-                        4..=6 => Position::Center,
-                        _ => Position::Right,
-                    };
-                    (i.to_string(), vec![DisplayRef::Position(p)])
-                })
-                .collect();
-        }
-        self.workspaces
-            .iter()
-            .map(|w| {
-                (
-                    w.name.clone(),
-                    w.display
-                        .to_vec()
-                        .iter()
-                        .map(|d| self.display_ref(d))
-                        .collect(),
-                )
-            })
-            .collect()
     }
 
     /// `[[rule]]`s in order, then one float rule per `float_apps` entry (so
@@ -821,39 +785,15 @@ position = "center"
 name = "right"
 position = "right"
 
-[[workspace]]
-name = "1"
-display = ["left", "main"]
-[[workspace]]
-name = "2"
-display = ["left", "main"]
-[[workspace]]
-name = "3"
-display = ["left", "main"]
-[[workspace]]
-name = "4"
-display = ["center", "main"]
-[[workspace]]
-name = "5"
-display = ["center", "main"]
-[[workspace]]
-name = "6"
-display = ["center", "main"]
-[[workspace]]
-name = "7"
-display = ["right", "main"]
-[[workspace]]
-name = "8"
-display = ["right", "main"]
-[[workspace]]
-name = "9"
-display = ["right", "main"]
+# Every display has its own workspaces 1-9: mod-N shows workspace N on the
+# display you are working on.
 
 # [[rule]]
 # app = "com.apple.finder"   # glob on bundle id
 # title = "^Copy"            # regex on window title
 # action = "float"           # float | tile | ignore
-# workspace = "3"
+# workspace = "3"           # workspace 3 of the display the window opens on
+# display = "right"          # ...or of this display
 
 [shortcuts]
 # "mod" means the modifier above.
@@ -868,10 +808,10 @@ mod tests {
     #[test]
     fn starter_config_parses() {
         let c = Config::parse(STARTER_CONFIG).unwrap();
-        assert_eq!(c.workspaces.len(), 9);
-        assert_eq!(
-            c.workspace_prefs()[0].1,
-            vec![DisplayRef::Position(Position::Left), DisplayRef::Main]
+        assert!(c.workspaces.is_empty());
+        // Old configs with [[workspace]] still load.
+        assert!(
+            Config::parse("[[workspace]]\nname = \"1\"\ndisplay = [\"left\", \"main\"]\n").is_ok()
         );
         assert!(c.bindings().unwrap().len() > 30);
     }
