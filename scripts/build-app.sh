@@ -37,10 +37,18 @@ if [[ -f shell/Resources/AppIcon.icns ]]; then
 fi
 
 echo "==> Sign ($IDENTITY)"
-if [[ "$IDENTITY" != "-" ]] && ! security find-identity -v -p codesigning | grep -q "\"$IDENTITY\""; then
-    echo "warning: identity \"$IDENTITY\" not found; signing ad-hoc." >&2
-    echo "         Run scripts/make-dev-cert.sh once so Accessibility trust survives rebuilds." >&2
-    IDENTITY="-"
+if [[ "$IDENTITY" != "-" ]]; then
+    # Resolve the name to the SHA-1 of a *valid* identity: stale or untrusted
+    # certs with the same name make `codesign --sign <name>` fail as ambiguous.
+    HASH="$(security find-identity -v -p codesigning \
+        | awk -v name="\"$IDENTITY\"" 'index($0, name) { print $2; exit }')"
+    if [[ -n "$HASH" ]]; then
+        IDENTITY="$HASH"
+    else
+        echo "warning: identity \"$IDENTITY\" not found; signing ad-hoc." >&2
+        echo "         Run scripts/make-dev-cert.sh once so Accessibility trust survives rebuilds." >&2
+        IDENTITY="-"
+    fi
 fi
 for helper in "$APP/Contents/Helpers/"*; do
     codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$helper"
