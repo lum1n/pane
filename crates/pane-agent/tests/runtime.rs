@@ -9,7 +9,7 @@ use crossbeam_channel::Sender;
 use pane_agent::paths::Paths;
 use pane_agent::platform::{AppWorker, HotkeyHandle, Platform, RunningApp};
 use pane_agent::{runtime, Options};
-use pane_core::config::Chord;
+use pane_core::config::{Chord, Mods};
 use pane_core::display::Display;
 use pane_core::event::{Event, WindowProbe};
 use pane_core::proto::{Command, QueryKind, Reply};
@@ -109,6 +109,7 @@ impl Platform for Fake {
     fn start_hotkeys(
         &self,
         _b: &[(Chord, Command)],
+        _g: Option<Mods>,
         _tx: Sender<Command>,
     ) -> Result<Box<dyn HotkeyHandle>, String> {
         Err("none".into())
@@ -312,9 +313,10 @@ fn stale_lock_triggers_restore_and_busy_lock_refuses() {
         fn start_hotkeys(
             &self,
             b: &[(Chord, Command)],
+            g: Option<Mods>,
             tx: Sender<Command>,
         ) -> Result<Box<dyn HotkeyHandle>, String> {
-            self.0.start_hotkeys(b, tx)
+            self.0.start_hotkeys(b, g, tx)
         }
     }
     let mut opts = Options::new(Paths::new(&dir));

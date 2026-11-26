@@ -62,6 +62,10 @@ pub struct Settings {
     /// Apps whose windows always tile, overriding automatic floating (for
     /// apps with unusual windows). Explicit `[[rule]]`s still win.
     pub tile_apps: Vec<String>,
+    /// Move windows by holding the modifier and pointing.
+    pub gestures: bool,
+    /// Modifier(s) for gestures; empty means the same as `modifier`.
+    pub gesture_modifier: String,
 }
 
 impl Default for Settings {
@@ -86,6 +90,8 @@ impl Default for Settings {
             modifier: "alt".into(),
             float_apps: vec![],
             tile_apps: vec![],
+            gestures: true,
+            gesture_modifier: String::new(),
         }
     }
 }
@@ -587,6 +593,7 @@ impl Config {
         }
         self.compiled_rules()?;
         self.bindings()?;
+        self.gesture_mods()?;
         Ok(())
     }
 
@@ -728,6 +735,19 @@ impl Config {
             .map_err(|e| ConfigError::plain(format!("[settings] modifier: {e}")))
     }
 
+    /// Modifiers that start a gesture, or `None` when gestures are off.
+    pub fn gesture_mods(&self) -> Result<Option<Mods>, ConfigError> {
+        if !self.settings.gestures {
+            return Ok(None);
+        }
+        if self.settings.gesture_modifier.trim().is_empty() {
+            return self.modifier().map(Some);
+        }
+        Mods::parse(&self.settings.gesture_modifier)
+            .map(Some)
+            .map_err(|e| ConfigError::plain(format!("[settings] gesture_modifier: {e}")))
+    }
+
     pub fn is_electron(&self, bundle_id: &str) -> bool {
         self.settings
             .electron_bundle_ids
@@ -765,6 +785,12 @@ return_workspaces_on_reconnect = true
 # "hyper" (cmd-ctrl-alt-shift), "meh" (ctrl-alt-shift), ...
 # Moving adds shift and resizing adds ctrl (or the next free modifier).
 modifier = "alt"
+
+# Hold the modifier over a window and point somewhere else to move it there;
+# release to drop, Escape cancels. Unset gesture_modifier means the same keys
+# as `modifier`.
+gestures = true
+# gesture_modifier = "ctrl-alt"
 
 # Apps whose windows always start floating (bundle ids, or the executable
 # name for apps started from a terminal; * globs work).
@@ -902,6 +928,17 @@ mod tests {
             .any(|(ch, cmd)| ch.display() == "cmd-ctrl-x" && *cmd == Command::Reload));
         assert!(Config::parse("[settings]\nmodifier = \"shift\"\n").is_err());
         assert!(Config::parse("[settings]\nmodifier = \"fn\"\n").is_err());
+    }
+
+    #[test]
+    fn gesture_modifier_defaults_to_modifier() {
+        let c = Config::parse("[settings]\nmodifier = \"ctrl-alt\"\n").unwrap();
+        assert_eq!(c.gesture_mods().unwrap(), Some(c.modifier().unwrap()));
+        let c = Config::parse("[settings]\ngesture_modifier = \"cmd-alt\"\n").unwrap();
+        assert_eq!(c.gesture_mods().unwrap().unwrap().display(), "cmd-alt");
+        let c = Config::parse("[settings]\ngestures = false\n").unwrap();
+        assert_eq!(c.gesture_mods().unwrap(), None);
+        assert!(Config::parse("[settings]\ngesture_modifier = \"shift\"\n").is_err());
     }
 
     #[test]

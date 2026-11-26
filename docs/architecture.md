@@ -36,6 +36,8 @@ The boundary is a C ABI with JSON payloads (`crates/pane-ffi/include/pane.h`). T
    Snapshot -> Swift icon (on change, ≤ 20 Hz)   UiRequest -> Swift   Reply -> waiting client
 ```
 
+Gestures take the same path: a listen-only tap on the hotkey thread watches the pointer and modifier keys, `gesture::GestureTracker` turns them into `Command::Gesture` phases, and the core answers with `UiRequest::GestureOverlay` (the frame the window will get, from `drop::preview`) for Swift to draw.
+
 The core thread never touches AX. A hung app blocks only its own worker. The core marks an app unresponsive after 2 s without a reply and leaves its windows alone until the app emits an event again.
 
 ## Key mechanisms

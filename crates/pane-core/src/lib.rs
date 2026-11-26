@@ -8,9 +8,11 @@
 pub mod assign;
 pub mod config;
 pub mod display;
+pub mod drop;
 pub mod effect;
 pub mod event;
 pub mod geometry;
+pub mod gesture;
 pub mod identity;
 pub mod layout;
 pub mod model;

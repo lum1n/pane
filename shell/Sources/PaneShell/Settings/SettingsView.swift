@@ -18,6 +18,8 @@ struct PaneSettings: Codable, Equatable {
     var modifier: String
     var float_apps: [String]
     var tile_apps: [String]
+    var gestures: Bool
+    var gesture_modifier: String
 }
 
 private struct ConfigReply: Codable {
@@ -344,6 +346,14 @@ private struct HotkeySettingsView: View {
                         modifierToggle("⌘ Command", \.cmd)
                     }
                     Text("Every default shortcut uses this. Moving adds ⇧ and resizing adds ⌃ (or the next key not already in the modifier). Shortcuts you set below follow the modifier when they include it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Toggle("Move windows by holding the modifier and pointing", isOn: Binding(
+                        get: { model.settings?.gestures ?? true },
+                        set: { model.set("gestures", $0) }
+                    ))
+                    Text("Hold the modifier over a window and point at another tile, its edge, a screen edge or another display; the outline shows where it goes. Release to drop, Esc cancels.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
