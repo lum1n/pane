@@ -8,7 +8,7 @@ use std::sync::{Arc, Once};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{select, unbounded, Receiver, Sender};
-use pane_core::config::{Config, STARTER_CONFIG};
+use pane_core::config::{default_shortcuts, Chord, Config, Mods, STARTER_CONFIG};
 use pane_core::display::Display;
 use pane_core::effect::Effect;
 use pane_core::event::Event;
@@ -722,6 +722,47 @@ impl Core {
         }
     }
 
+    /// Rewrite config.toml with `f`, refusing results that do not parse,
+    /// then reload.
+    fn edit_config(&mut self, f: impl FnOnce(&str) -> Result<String, String>) -> Reply {
+        let text = std::fs::read_to_string(self.paths.config()).unwrap_or_default();
+        let new = match f(&text) {
+            Ok(t) => t,
+            Err(e) => return Reply::err(e),
+        };
+        if let Err(e) = Config::parse(&new) {
+            return Reply::err(e.render());
+        }
+        if let Err(e) = persist::write_atomic(&self.paths.config(), new.as_bytes()) {
+            return Reply::err(e.to_string());
+        }
+        self.load_config()
+    }
+
+    fn set_setting(&mut self, key: &str, value: &serde_json::Value) -> Reply {
+        let known =
+            serde_json::to_value(pane_core::config::Settings::default()).unwrap_or_default();
+        if known.get(key).is_none() {
+            return Reply::err(format!("unknown setting `{key}`"));
+        }
+        let literal = match toml_literal(value) {
+            Ok(l) => l,
+            Err(e) => return Reply::err(e),
+        };
+        let key = key.to_string();
+        self.edit_config(move |t| Ok(persist::set_setting(t, &key, literal.as_deref())))
+    }
+
+    fn rebind(&mut self, command: &str, chord: Option<&str>) -> Reply {
+        let command = command.trim().to_string();
+        let chord = chord.map(str::to_string);
+        self.edit_config(move |text| {
+            let cfg = Config::parse(text)
+                .map_err(|e| format!("fix config.toml first: {}", e.render()))?;
+            rebind_text(text, &cfg, &command, chord.as_deref())
+        })
+    }
+
     fn command(&mut self, cmd: Command, reply: Option<Sender<Reply>>) {
         let local = match cmd {
             Command::Reload => Some(self.load_config()),
@@ -780,6 +821,20 @@ impl Core {
             Command::Query {
                 what: QueryKind::Snapshot,
             } => Some(Reply::data(&self.snapshot())),
+            Command::SetSetting { ref key, ref value } => Some(self.set_setting(key, value)),
+            Command::Rebind {
+                ref command,
+                ref chord,
+            } => Some(self.rebind(command, chord.as_deref())),
+            Command::ResetShortcuts => {
+                Some(self.edit_config(|t| Ok(persist::edit_table(t, "shortcuts", |_| true, &[]))))
+            }
+            Command::SuspendHotkeys { suspended } => {
+                if let Some(h) = &self.hotkeys {
+                    h.set_suspended(suspended);
+                }
+                Some(Reply::ok())
+            }
             _ => None,
         };
         match local {
@@ -833,5 +888,177 @@ impl Core {
         let _ = done.send(());
         tracing::info!("clean exit");
         true
+    }
+}
+
+/// JSON value from Settings -> TOML literal (`None` removes the key).
+fn toml_literal(v: &serde_json::Value) -> Result<Option<String>, String> {
+    use serde_json::Value as J;
+    Ok(match v {
+        J::Null => None,
+        J::Bool(b) => Some(b.to_string()),
+        J::Number(n) => Some(n.to_string()),
+        J::String(s) => Some(persist::toml_string(s)),
+        J::Array(items) => {
+            let parts: Result<Vec<String>, String> = items
+                .iter()
+                .map(|i| match i {
+                    J::String(s) => Ok(persist::toml_string(s)),
+                    J::Number(n) => Ok(n.to_string()),
+                    J::Bool(b) => Ok(b.to_string()),
+                    _ => Err("only flat lists are supported".to_string()),
+                })
+                .collect();
+            Some(format!("[{}]", parts?.join(", ")))
+        }
+        J::Object(_) => return Err("tables are not supported here".into()),
+    })
+}
+
+/// Write a chord the way `[shortcuts]` keys are written: relative to the
+/// modifier (`mod-shift-x`) when it contains it, so it follows later
+/// modifier changes.
+fn chord_key(c: &Chord, base: &Mods) -> String {
+    let m = Mods {
+        cmd: c.cmd,
+        alt: c.alt,
+        ctrl: c.ctrl,
+        shift: c.shift,
+    };
+    if m.contains(*base) {
+        let extra = Mods {
+            cmd: m.cmd && !base.cmd,
+            alt: m.alt && !base.alt,
+            ctrl: m.ctrl && !base.ctrl,
+            shift: m.shift && !base.shift,
+        };
+        let e = extra.display();
+        if e.is_empty() {
+            format!("mod-{}", c.key)
+        } else {
+            format!("mod-{e}-{}", c.key)
+        }
+    } else {
+        c.display()
+    }
+}
+
+/// New config text in which `command` is bound to exactly `chord` (or
+/// nothing): its other overrides go, its default chords are set to "none",
+/// and whatever held `chord` before is replaced.
+pub fn rebind_text(
+    text: &str,
+    cfg: &Config,
+    command: &str,
+    chord: Option<&str>,
+) -> Result<String, String> {
+    let base = cfg.modifier().map_err(|e| e.render())?;
+    let cmd = Command::parse(command)?;
+    let new = chord.map(|c| Chord::parse_with(c, &base)).transpose()?;
+    let defaults: Vec<Chord> = default_shortcuts(&base)
+        .into_iter()
+        .filter(|(_, t)| Command::parse(t).ok().as_ref() == Some(&cmd))
+        .filter_map(|(c, _)| Chord::parse_with(&c, &base).ok())
+        .collect();
+    let mut remove: HashSet<String> = HashSet::new();
+    let mut kept_on: Vec<Chord> = Vec::new();
+    for (k, v) in &cfg.shortcuts {
+        let kc = Chord::parse_with(k, &base).ok();
+        let is_none = v.trim() == "none";
+        let binds_cmd = !is_none && Command::parse(v).ok().as_ref() == Some(&cmd);
+        let on_new = new.is_some() && kc == new;
+        let unbinds_default = is_none && kc.as_ref().is_some_and(|c| defaults.contains(c));
+        if binds_cmd || on_new || unbinds_default {
+            remove.insert(k.clone());
+        } else if let Some(c) = kc {
+            kept_on.push(c);
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for d in &defaults {
+        if Some(d) != new.as_ref() && !kept_on.contains(d) {
+            lines.push(format!(
+                "{} = \"none\"",
+                persist::toml_string(&chord_key(d, &base))
+            ));
+        }
+    }
+    if let Some(c) = &new {
+        lines.push(format!(
+            "{} = {}",
+            persist::toml_string(&chord_key(c, &base)),
+            persist::toml_string(command)
+        ));
+    }
+    Ok(persist::edit_table(
+        text,
+        "shortcuts",
+        |k| remove.contains(k),
+        &lines,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pane_core::config::STARTER_CONFIG;
+
+    fn chord_of(cfg: &Config, cmd: &str) -> Vec<String> {
+        cfg.binding_table()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.command == cmd)
+            .unwrap()
+            .chords
+    }
+
+    #[test]
+    fn rebind_moves_and_clears() {
+        let c = Config::parse(STARTER_CONFIG).unwrap();
+        let t = rebind_text(STARTER_CONFIG, &c, "focus left", Some("cmd-alt-y")).unwrap();
+        let c = Config::parse(&t).unwrap();
+        assert_eq!(chord_of(&c, "focus left"), vec!["cmd-alt-y"]);
+        assert!(t.contains("\"mod-h\" = \"none\""), "{t}");
+        assert!(t.contains("\"mod-cmd-y\" = \"focus left\""), "{t}");
+        // Rebinding again replaces, does not pile up.
+        let t2 = rebind_text(&t, &c, "focus left", Some("alt-h")).unwrap();
+        let c2 = Config::parse(&t2).unwrap();
+        assert_eq!(chord_of(&c2, "focus left"), vec!["alt-h"]);
+        assert!(c2.shortcuts.len() <= 1, "{:?}", c2.shortcuts);
+        // Clearing leaves it unbound.
+        let t3 = rebind_text(&t2, &c2, "focus left", None).unwrap();
+        assert!(chord_of(&Config::parse(&t3).unwrap(), "focus left").is_empty());
+        // Overrides written with `mod` follow a modifier change.
+        let t4 = persist::set_setting(&t, "modifier", Some("\"ctrl-alt\""));
+        assert_eq!(
+            chord_of(&Config::parse(&t4).unwrap(), "focus left"),
+            vec!["cmd-ctrl-alt-y"]
+        );
+    }
+
+    #[test]
+    fn stealing_a_chord_replaces_its_owner() {
+        let c = Config::parse(STARTER_CONFIG).unwrap();
+        let t = rebind_text(STARTER_CONFIG, &c, "recover", Some("alt-h")).unwrap();
+        let c = Config::parse(&t).unwrap();
+        assert_eq!(chord_of(&c, "recover"), vec!["alt-h"]);
+        assert!(chord_of(&c, "focus left").is_empty());
+    }
+
+    #[test]
+    fn literals() {
+        assert_eq!(
+            toml_literal(&serde_json::json!(6)).unwrap().as_deref(),
+            Some("6")
+        );
+        assert_eq!(
+            toml_literal(&serde_json::json!("a\"b")).unwrap().as_deref(),
+            Some("\"a\\\"b\"")
+        );
+        assert_eq!(
+            toml_literal(&serde_json::json!(["x"])).unwrap().as_deref(),
+            Some("[\"x\"]")
+        );
+        assert_eq!(toml_literal(&serde_json::Value::Null).unwrap(), None);
     }
 }

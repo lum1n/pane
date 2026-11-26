@@ -164,6 +164,64 @@ fn runtime_tiles_parks_persists_and_restores() {
     .unwrap();
     assert_eq!(r, Reply::data(&"pong"));
 
+    // Settings edits go through config.toml and take effect immediately.
+    let r = h.command(
+        Command::SetSetting {
+            key: "outer_gap".into(),
+            value: serde_json::json!(20),
+        },
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
+    wait_until(|| frames.lock().unwrap()[&WindowId(71)].x == 20.0);
+    let bad = h.command(
+        Command::SetSetting {
+            key: "outer_gap".into(),
+            value: serde_json::json!("wide"),
+        },
+        Duration::from_secs(2),
+    );
+    assert!(
+        matches!(bad, Reply::Error { .. }),
+        "invalid values are refused"
+    );
+    assert!(std::fs::read_to_string(dir.join("config.toml"))
+        .unwrap()
+        .contains("outer_gap = 20"));
+    let r = h.command(
+        Command::Rebind {
+            command: "focus left".into(),
+            chord: Some("cmd-alt-y".into()),
+        },
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
+    let Reply::Ok { data } = h.command(
+        Command::Query {
+            what: QueryKind::Bindings,
+        },
+        Duration::from_secs(2),
+    ) else {
+        panic!()
+    };
+    let rows: Vec<pane_core::config::BindingInfo> = serde_json::from_value(data).unwrap();
+    assert_eq!(
+        rows.iter()
+            .find(|r| r.command == "focus left")
+            .unwrap()
+            .chords,
+        vec!["cmd-alt-y"]
+    );
+    let r = h.command(
+        Command::SetSetting {
+            key: "outer_gap".into(),
+            value: serde_json::json!(6),
+        },
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }));
+    wait_until(|| frames.lock().unwrap()[&WindowId(71)].x == 6.0);
+
     // Switch away: both parked at the corner, journal written.
     let r = h.command(
         Command::Workspace { name: "2".into() },

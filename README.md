@@ -18,21 +18,23 @@ On first launch, macOS asks for Accessibility access. Tiling starts as soon as y
 
 ## Use
 
+All shortcuts are built on one **modifier** (`mod`, Option by default). Change it, or any single shortcut, in **Settings > Hotkeys**: tick the modifier keys you want, or click a shortcut and press a new one. Moving adds Shift and resizing adds Control; if Shift or Control is already part of the modifier, the next free key is used instead.
+
 | Keys | Action |
 |---|---|
-| `alt-h/j/k/l` | focus left/down/up/right (crosses displays, including empty ones) |
-| `alt-shift-h/j/k/l` | move window (at the edge: to the next display) |
-| `alt-ctrl-h/l`, `alt-ctrl-k/j` | narrower/wider, shorter/taller by 5% |
-| `alt-1..9` | show workspace |
-| `alt-shift-1..9` | move window to workspace |
-| `alt-,` / `alt-.` | focus previous/next display |
-| `alt-shift-,` / `alt-shift-.` | move workspace to previous/next display |
-| `alt-s` | toggle split direction |
-| `alt-a` | tiles / accordion |
-| `alt-f` | float / tile |
-| `alt-return` | swap workspaces with the next display |
-| `alt-shift-r` | reload config |
-| `alt-shift-p` | profile picker |
+| `mod-h/j/k/l` | focus left/down/up/right (crosses displays, including empty ones) |
+| `mod-shift-h/j/k/l` | move window (at the edge: to the next display) |
+| `mod-ctrl-h/l`, `mod-ctrl-k/j` | narrower/wider, shorter/taller by 5% |
+| `mod-1..9` | show workspace |
+| `mod-shift-1..9` | move window to workspace |
+| `mod-,` / `mod-.` | focus previous/next display |
+| `mod-shift-,` / `mod-shift-.` | move workspace to previous/next display |
+| `mod-s` | toggle split direction |
+| `mod-a` | tiles / accordion |
+| `mod-f` | float / tile |
+| `mod-return` | swap workspaces with the next display |
+| `mod-shift-r` | reload config |
+| `mod-shift-p` | profile picker |
 
 The `pane` CLI talks to the running app over a Unix socket:
 
@@ -42,7 +44,7 @@ pane do "focus left"      pane profile list|apply NAME|capture NAME|delete NAME
 pane reload               pane recover [--all-apps]
 ```
 
-Configuration is in `~/Library/Application Support/Pane/config.toml`; see [docs/config.md](docs/config.md).
+Settings (gaps, behaviour, startup profile, all hotkeys) are in **Settings…** in the menu. They are stored in `~/Library/Application Support/Pane/config.toml`, which you can also edit by hand; see [docs/config.md](docs/config.md). Displays, workspaces and window rules are edited in the file.
 
 ## Recovery
 

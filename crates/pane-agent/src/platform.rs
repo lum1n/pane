@@ -22,6 +22,8 @@ pub trait AppWorker: Send {
 
 pub trait HotkeyHandle: Send {
     fn update(&self, bindings: &[(Chord, Command)]);
+    /// While suspended, chords pass through to apps untouched.
+    fn set_suspended(&self, suspended: bool);
 }
 
 pub trait Platform: Send + Sync + 'static {
@@ -116,6 +118,9 @@ pub mod mac {
     impl HotkeyHandle for H {
         fn update(&self, bindings: &[(Chord, Command)]) {
             self.0.update(bindings)
+        }
+        fn set_suspended(&self, suspended: bool) {
+            self.0.set_suspended(suspended)
         }
     }
 

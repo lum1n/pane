@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crossbeam_channel::Sender;
@@ -20,6 +20,7 @@ type Table = HashMap<(u16, u8), Command>;
 
 struct TapState {
     table: Arc<RwLock<Table>>,
+    suspended: Arc<AtomicBool>,
     tx: Sender<Command>,
 }
 
@@ -53,6 +54,9 @@ unsafe extern "C" fn tap_cb(
         return event;
     }
     let st = &*(user as *const TapState);
+    if st.suspended.load(Ordering::Relaxed) {
+        return event;
+    }
     let code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode) as u16;
     let flags = CGEventGetFlags(event);
     let mods = ((flags & kCGEventFlagMaskShift != 0) as u8 * SHIFT)
@@ -80,6 +84,7 @@ unsafe extern "C" fn tap_cb(
 #[derive(Clone)]
 pub struct Hotkeys {
     table: Arc<RwLock<Table>>,
+    suspended: Arc<AtomicBool>,
 }
 
 impl Hotkeys {
@@ -87,9 +92,11 @@ impl Hotkeys {
     /// tap (Accessibility / Input Monitoring not granted).
     pub fn start(bindings: &[(Chord, Command)], tx: Sender<Command>) -> Result<Hotkeys, String> {
         let table = Arc::new(RwLock::new(build(bindings)));
+        let suspended = Arc::new(AtomicBool::new(false));
         let (ok_tx, ok_rx) = crossbeam_channel::bounded(1);
         let state = Box::new(TapState {
             table: table.clone(),
+            suspended: suspended.clone(),
             tx,
         });
         std::thread::Builder::new()
@@ -118,9 +125,13 @@ impl Hotkeys {
             })
             .map_err(|e| e.to_string())?;
         match ok_rx.recv() {
-            Ok(true) => Ok(Hotkeys { table }),
+            Ok(true) => Ok(Hotkeys { table, suspended }),
             _ => Err("could not create the keyboard event tap (grant Accessibility, and Input Monitoring if asked)".into()),
         }
+    }
+
+    pub fn set_suspended(&self, s: bool) {
+        self.suspended.store(s, Ordering::Relaxed);
     }
 
     pub fn update(&self, bindings: &[(Chord, Command)]) {

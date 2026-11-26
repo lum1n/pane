@@ -105,38 +105,70 @@ pub fn write_profile(path: &Path, p: &Profile) -> Result<(), String> {
     write_atomic(path, p.to_toml()?.as_bytes()).map_err(|e| e.to_string())
 }
 
-/// Set (or clear) `startup_profile` in config.toml, keeping everything else
-/// (including comments) as written.
-pub fn set_startup_profile(config_text: &str, name: Option<&str>) -> String {
-    // Drop the existing key (or its commented-out template) inside [settings].
-    let mut lines: Vec<String> = Vec::new();
-    let mut in_settings = false;
-    for l in config_text.lines() {
+/// Edit one table of config.toml as text, keeping comments and layout:
+/// drop the active `key = value` lines of `[table]` for which `remove(key)`
+/// is true, then insert `lines` right after the table header (creating the
+/// table at the end if it does not exist).
+pub fn edit_table(
+    text: &str,
+    table: &str,
+    remove: impl Fn(&str) -> bool,
+    lines: &[String],
+) -> String {
+    let header = format!("[{table}]");
+    let mut out: Vec<String> = Vec::new();
+    let mut inside = false;
+    for l in text.lines() {
         let t = l.trim();
         if t.starts_with('[') {
-            in_settings = t == "[settings]";
+            inside = t == header;
         }
-        let key = t.trim_start_matches('#').trim_start();
-        if in_settings && key.starts_with("startup_profile") {
-            continue;
+        if inside && !t.starts_with('#') && !t.starts_with('[') {
+            if let Some((k, _)) = t.split_once('=') {
+                let k = k.trim().trim_matches('"').trim_matches('\'');
+                if remove(k) {
+                    continue;
+                }
+            }
         }
-        lines.push(l.to_string());
+        out.push(l.to_string());
     }
-    if let Some(n) = name {
-        let line = format!("startup_profile = {}", toml_string(n));
-        match lines.iter().position(|l| l.trim() == "[settings]") {
-            Some(i) => lines.insert(i + 1, line),
+    if !lines.is_empty() {
+        match out.iter().position(|l| l.trim() == header) {
+            Some(i) => {
+                for (j, line) in lines.iter().enumerate() {
+                    out.insert(i + 1 + j, line.clone());
+                }
+            }
             None => {
-                lines.push(String::new());
-                lines.push("[settings]".into());
-                lines.push(line);
+                out.push(String::new());
+                out.push(header);
+                out.extend(lines.iter().cloned());
             }
         }
     }
-    lines.join("\n") + "\n"
+    out.join("\n") + "\n"
 }
 
-fn toml_string(s: &str) -> String {
+/// Set (or clear) `startup_profile` in config.toml.
+pub fn set_startup_profile(config_text: &str, name: Option<&str>) -> String {
+    let lines: Vec<String> = name
+        .map(|n| format!("startup_profile = {}", toml_string(n)))
+        .into_iter()
+        .collect();
+    edit_table(config_text, "settings", |k| k == "startup_profile", &lines)
+}
+
+/// Set a `[settings]` key to a TOML literal, or remove it.
+pub fn set_setting(config_text: &str, key: &str, literal: Option<&str>) -> String {
+    let lines: Vec<String> = literal
+        .map(|v| format!("{key} = {v}"))
+        .into_iter()
+        .collect();
+    edit_table(config_text, "settings", |k| k == key, &lines)
+}
+
+pub fn toml_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -182,6 +214,29 @@ mod tests {
                 .as_deref(),
             Some("y")
         );
+    }
+
+    #[test]
+    fn edit_table_keeps_comments() {
+        let t = set_setting(STARTER_CONFIG, "inner_gap", Some("10"));
+        assert!(t.contains("# Pane configuration"));
+        let c = Config::parse(&t).unwrap();
+        assert_eq!(c.settings.inner_gap, 10.0);
+        assert_eq!(t.matches("inner_gap").count(), 1);
+        let t = edit_table(
+            &t,
+            "shortcuts",
+            |_| false,
+            &["\"mod-x\" = \"reload\"".into()],
+        );
+        assert!(Config::parse(&t).unwrap().shortcuts.contains_key("mod-x"));
+        let t = edit_table(
+            "version = 1\n",
+            "shortcuts",
+            |_| false,
+            &["\"alt-x\" = \"reload\"".into()],
+        );
+        assert!(Config::parse(&t).unwrap().shortcuts.contains_key("alt-x"));
     }
 
     #[test]

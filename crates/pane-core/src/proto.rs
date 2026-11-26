@@ -78,6 +78,24 @@ pub enum Command {
         profile: Profile,
         edit: ProfileEdit,
     },
+    /// Set a `[settings]` value in config.toml (JSON null removes it) and reload.
+    SetSetting {
+        key: String,
+        value: serde_json::Value,
+    },
+    /// Bind `command` to `chord` instead of whatever it had; `chord: None`
+    /// leaves it unbound. Handled by the runtime (edits `[shortcuts]`).
+    Rebind {
+        command: String,
+        #[serde(default)]
+        chord: Option<String>,
+    },
+    /// Drop every `[shortcuts]` override (back to the defaults).
+    ResetShortcuts,
+    /// Pause hotkeys (while Settings records a new shortcut).
+    SuspendHotkeys {
+        suspended: bool,
+    },
     Ping,
 }
 
@@ -90,6 +108,10 @@ pub enum QueryKind {
     Tree,
     Snapshot,
     Config,
+    /// Hotkey table (`config::BindingInfo` rows).
+    Bindings,
+    /// Key names to macOS keycodes.
+    Keys,
 }
 
 impl Command {

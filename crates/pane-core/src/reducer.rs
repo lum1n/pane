@@ -1124,6 +1124,10 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             Ok(p) => Reply::data(&p),
             Err(e) => Reply::err(e),
         },
+        Command::SetSetting { .. }
+        | Command::Rebind { .. }
+        | Command::ResetShortcuts
+        | Command::SuspendHotkeys { .. } => Reply::err("config editing is handled by the runtime"),
         Command::ProfileSave { .. }
         | Command::ProfileLoad { .. }
         | Command::ProfileDelete { .. }
@@ -1590,6 +1594,16 @@ fn query(m: &Model, what: QueryKind) -> Reply {
         }
         QueryKind::Snapshot => Reply::data(&crate::snapshot::build(m)),
         QueryKind::Config => Reply::data(&m.config),
+        QueryKind::Bindings => match m.config.binding_table() {
+            Ok(t) => Reply::data(&t),
+            Err(e) => Reply::err(e.render()),
+        },
+        QueryKind::Keys => Reply::data(
+            &crate::config::KEYS
+                .iter()
+                .map(|(n, k)| (n.to_string(), *k))
+                .collect::<BTreeMap<String, u16>>(),
+        ),
     }
 }
 

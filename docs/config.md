@@ -1,6 +1,6 @@
 # config.toml
 
-`~/Library/Application Support/Pane/config.toml` is created with comments on first launch. To reload it, press `alt-shift-r`, run `pane reload`, or use the menu. Unknown keys are errors; errors show line and column in a notice and in Settings, and Pane keeps the previous config.
+`~/Library/Application Support/Pane/config.toml` is created with comments on first launch. **Settings…** in the menu edits `[settings]` and the hotkeys for you. It rewrites only the lines it changes, keeps your comments, and refuses changes that would make the file invalid. To reload it, press `alt-shift-r`, run `pane reload`, or use the menu. Unknown keys are errors; errors show line and column in a notice and in Settings, and Pane keeps the previous config.
 
 ```toml
 version = 1
@@ -16,6 +16,8 @@ startup_profile = "work"         # applied once the first scan finishes
 electron_bundle_ids = ["com.microsoft.VSCode"]   # use size/position/size when moving
 resize_step = 0.05
 auto_float_below = 120           # windows narrower or shorter than this float
+modifier = "alt"                 # behind every default hotkey: "alt", "ctrl-alt", "cmd-ctrl",
+                                 # "hyper" (cmd-ctrl-alt-shift), "meh" (ctrl-alt-shift)
 
 # Name displays. Each alias needs exactly one of: position, uuid, match_name.
 [[display]]
@@ -38,10 +40,23 @@ action = "float"                 # float | tile | ignore
 workspace = "3"                  # optional: where new windows go
 display = "right"                # optional: visible workspace of that display
 
-[shortcuts]                      # merged over the defaults
-"alt-h" = "focus left"
-"alt-q" = "none"                 # unbind a default
+[shortcuts]                      # merged over the defaults; "mod" = the modifier above
+"mod-h" = "focus left"
+"mod-q" = "none"                 # unbind a default
+"cmd-ctrl-t" = "toggle-float"    # absolute chords work too
 ```
+
+## Hotkey layers
+
+Defaults come in three layers, all built from `modifier`:
+
+- **base** (`mod`): focus, workspaces, display focus, toggles.
+- **move** (`mod` + Shift): move window, move to workspace, move workspace to display, reload, profile picker.
+- **resize** (`mod` + Control): resize.
+
+If the modifier already includes Shift or Control, those layers take the next free key, in the order Control, Option, Command, Shift. The two layers never collide. With `hyper` every modifier is already in use, so only the base layer gets defaults; bind the rest in `[shortcuts]` or in Settings.
+
+Shortcuts set in Settings are written relative to the modifier (`"mod-cmd-y"`) when they include it, so they move with it if you change the modifier later.
 
 ## Display references
 
@@ -55,7 +70,7 @@ These forms work in `[[workspace]].display`, `[[rule]].display` and profile file
 
 ## Shortcut commands
 
-Modifiers are `cmd`, `alt`, `ctrl` and `shift`. Keys are `a`-`z`, `0`-`9`, `return`, `tab`, `space`, `escape`, `comma`, `period`, `slash`, `semicolon`, `quote`, `leftbracket`, `rightbracket`, `minus`, `equal`, `backslash`, `grave`, the arrow keys (`left`, `right`, `up`, `down`) and `f1`-`f12`.
+Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are `a`-`z`, `0`-`9`, `return`, `tab`, `space`, `escape`, `comma`, `period`, `slash`, `semicolon`, `quote`, `leftbracket`, `rightbracket`, `minus`, `equal`, `backslash`, `grave`, the arrow keys (`left`, `right`, `up`, `down`) and `f1`-`f12`.
 
 | Command | Meaning |
 |---|---|
