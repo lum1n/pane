@@ -21,6 +21,9 @@ modifier = "alt"                 # behind every default hotkey: "alt", "ctrl-alt
                                  # "hyper" (cmd-ctrl-alt-shift), "meh" (ctrl-alt-shift)
 gestures = true                  # hold the modifier and point to move windows
 gesture_modifier = ""            # keys for gestures; empty = same as `modifier`
+border_width = 2                 # border around the focused window, points; 0 = off
+border_color = "accent"          # "accent" (system accent) or "#rrggbb" / "#rrggbbaa"
+dim_unfocused = 0                # darken unfocused windows, 0 (off) to 0.8
 
 # Name displays. Each alias needs exactly one of: position, uuid, match_name.
 [[display]]

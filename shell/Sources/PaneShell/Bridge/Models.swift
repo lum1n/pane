@@ -63,6 +63,15 @@ struct Snapshot: Codable, Equatable {
     var active_profile: String?
     var profiles: [String]
     var ax_trusted: Bool
+    var appearance: SnapAppearance?
+}
+
+/// `snapshot::SnapAppearance`: focus border and dimming.
+struct SnapAppearance: Codable, Equatable {
+    var border_width: Double
+    /// RGBA in 0...1; nil means the system accent colour.
+    var border_color: [Double]?
+    var dim_unfocused: Double
 }
 
 struct AppSlot: Codable, Equatable, Hashable {
