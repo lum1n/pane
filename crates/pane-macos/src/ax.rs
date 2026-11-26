@@ -239,8 +239,12 @@ impl AxElement {
         if double_set {
             let _ = self.set_size(r.w, r.h);
         }
-        self.set_position(r.x, r.y)?;
-        self.set_size(r.w, r.h)
+        // Always apply both: AX often reports an error for a position change
+        // that did happen (notably off-screen), and stopping there would
+        // leave the window moved but not resized.
+        let pos = self.set_position(r.x, r.y);
+        let size = self.set_size(r.w, r.h);
+        pos.and(size)
     }
 }
 

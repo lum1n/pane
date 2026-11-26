@@ -441,7 +441,13 @@ pub fn on_frame_applied(
     } else {
         a.origin_near(&d, 1.0) && (a.w - d.w).abs() <= 2.0 && (a.h - d.h).abs() <= 2.0
     };
-    if ok && landed {
+    // Trust where the window actually is over the AX status: apps (and
+    // macOS for off-screen moves) report errors for moves that did happen.
+    // Only without a read-back does the status decide.
+    if landed && (actual.is_some() || ok) {
+        if !ok {
+            tracing::debug!(%wid, "AX reported an error but the frame landed");
+        }
         let e = m.last_sent.get_mut(&wid).unwrap();
         e.settled = true;
         e.next_retry_ms = None;
@@ -480,6 +486,14 @@ pub fn on_frame_applied(
     let attempts = s.attempts + 1;
     if attempts as usize > RETRY_BACKOFF_MS.len() && parked {
         // Never give up on a window over hiding it: settle where it is.
+        let e = m.last_sent.get_mut(&wid).unwrap();
+        e.settled = true;
+        e.next_retry_ms = None;
+        return;
+    }
+    if attempts as usize > RETRY_BACKOFF_MS.len() && actual.is_none() {
+        // We cannot even read where it is: do not punish the window for it.
+        tracing::warn!(%wid, "no frame read-back after retries; leaving it");
         let e = m.last_sent.get_mut(&wid).unwrap();
         e.settled = true;
         e.next_retry_ms = None;

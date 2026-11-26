@@ -302,7 +302,11 @@ fn on_command(st: &Rc<RefCell<State>>, cmd: WorkerCmd) -> bool {
                 );
                 return true;
             };
-            let mut ok = el.set_frame(&rect, double_set).is_ok();
+            let first = el.set_frame(&rect, double_set);
+            if let Err(e) = &first {
+                tracing::debug!(pid, %wid, %e, "AX error setting frame (read-back decides)");
+            }
+            let mut ok = first.is_ok();
             let mut actual = el.frame();
             // Chromium quirk: the first attempt can land a few points off when
             // crossing displays; one immediate size/position/size fixes it.

@@ -56,6 +56,10 @@ struct Sim {
     /// Apps that apply a move late: the read-back right after a SetFrame
     /// still shows the previous frame.
     lagging: Vec<WindowId>,
+    /// Report every SetFrame as failed (AX error) even though it moved.
+    report_errors: bool,
+    /// Report no read-back frame.
+    no_readback: bool,
     notices: Vec<String>,
     launches: Vec<String>,
     sets: usize,
@@ -77,6 +81,8 @@ impl Sim {
             stuck: vec![],
             clamp_offscreen: false,
             lagging: vec![],
+            report_errors: false,
+            no_readback: false,
             notices: vec![],
             launches: vec![],
             sets: 0,
@@ -138,8 +144,8 @@ impl Sim {
                             pid: *pid,
                             wid: *wid,
                             gen: *gen,
-                            ok: true,
-                            actual: Some(actual),
+                            ok: !self.report_errors,
+                            actual: if self.no_readback { None } else { Some(actual) },
                         });
                     }
                     Effect::UiRequest(UiRequest::Notice { message, .. }) => {
@@ -1254,4 +1260,51 @@ fn watchdog_resends_windows_found_hidden() {
         "watchdog put it back: {:?}",
         s.frame(1)
     );
+}
+
+fn hide_and_return(configure: impl Fn(&mut Sim)) -> (Sim, Vec<String>) {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.window(100, 2, "two", CENTER);
+    configure(&mut s);
+    s.cmd(Command::Workspace { name: "2".into() });
+    for _ in 0..8 {
+        s.tick(1000);
+    }
+    s.cmd(Command::Workspace { name: "1".into() });
+    for _ in 0..8 {
+        s.tick(1000);
+    }
+    let notes = s.notices.clone();
+    (s, notes)
+}
+
+#[test]
+fn hiding_never_marks_windows_stubborn() {
+    for (name, cfg) in [
+        (
+            "errors",
+            (|s: &mut Sim| s.report_errors = true) as fn(&mut Sim),
+        ),
+        ("no readback", |s: &mut Sim| s.no_readback = true),
+        ("clamped", |s: &mut Sim| s.clamp_offscreen = true),
+        ("lagging", |s: &mut Sim| {
+            s.lagging = vec![WindowId(1), WindowId(2)]
+        }),
+    ] {
+        let (s, notes) = hide_and_return(cfg);
+        assert!(
+            !notes.iter().any(|n| n.contains("refuses")),
+            "{name}: {notes:?}"
+        );
+        for w in [1, 2] {
+            let info = &s.m.windows[&WindowId(w)];
+            assert!(
+                !info.stubborn && info.mode == WindowMode::Tiled,
+                "{name}: window {w} {info:?}"
+            );
+        }
+    }
 }
