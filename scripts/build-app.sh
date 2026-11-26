@@ -21,8 +21,11 @@ cargo build --release --target "$TARGET" -p pane-ffi -p pane-cli -p pane-agent
 cp crates/pane-ffi/include/pane.h shell/Sources/CPane/include/pane.h
 
 echo "==> Swift shell"
-swift build -c release --package-path shell --arch arm64
 BIN="$(swift build -c release --package-path shell --arch arm64 --show-bin-path)"
+# SwiftPM does not track libpane_ffi.a as an input, so a Rust-only change would
+# leave the old shell linked. Removing the binary forces a relink.
+rm -f "$BIN/Pane"
+swift build -c release --package-path shell --arch arm64
 
 echo "==> Bundle"
 rm -rf "$APP"
