@@ -81,6 +81,17 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] A bad size (`big`) shows the config error in the tab and leaves `config.toml` unchanged.
 - [ ] `pane do "summon Safari"` from another workspace moves a Safari window next to the focused tile without switching workspace; with Safari not running it opens.
 
+## Layout presets
+- [ ] Three windows on a workspace, `pane do "layout master-stack"`: the first is on the left at 60% of the width, the other two stacked on the right.
+- [ ] Open a fourth window: it joins the stack; the master keeps its width. Close the master: the next window becomes the master.
+- [ ] Widen the master with `mod-ctrl-l`, open a window: the master stays that wide.
+- [ ] `pane do "layout master-stack 70"`: the master becomes 70% wide.
+- [ ] Restart Pane: the workspace still re-shapes when a window opens. `pane query workspaces` shows its `layout`.
+- [ ] `pane do "layout columns 3"` with five windows: three equal columns (two, two, one). A sixth window makes it two, two, two.
+- [ ] `pane do "layout manual"`, open a window: it opens next to the focused tile and nothing else moves.
+- [ ] Resize a tile, then `pane do "balance"`: the tiles of that split are equal again; other splits keep their sizes.
+- [ ] Palette, `>layout`: "Layout: master and stack", "Layout: 2 columns", "Layout: 3 columns", "Layout: manual (stop re-arranging)"; `>balance`: "Balance tile sizes". Each runs.
+
 ## Event stream
 - [ ] `pane subscribe | jq -c .` in a terminal: prints `displays`, one `workspace-shown` per display, `workspaces`, `focus` and `profile` at once.
 - [ ] Switch workspace with a hotkey: a `workspace-shown` with the new `workspace` and `previous`, then `workspaces` and `focus`.

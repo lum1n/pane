@@ -80,6 +80,9 @@ pub struct Settings {
     pub border_color: String,
     /// How much to darken windows that do not have focus (0 = off, 0.8 max).
     pub dim_unfocused: f64,
+    /// Share of the width `layout master-stack` gives the master tile
+    /// (0.1 to 0.9).
+    pub master_ratio: f64,
 }
 
 impl Default for Settings {
@@ -110,6 +113,7 @@ impl Default for Settings {
             border_width: 2.0,
             border_color: "accent".into(),
             dim_unfocused: 0.0,
+            master_ratio: 0.6,
         }
     }
 }
@@ -686,6 +690,11 @@ impl Config {
                 "dim_unfocused must be between 0 and 0.8",
             ));
         }
+        if !crate::workspace::MASTER_RATIO_RANGE.contains(&s.master_ratio) {
+            return Err(ConfigError::plain(
+                "master_ratio must be between 0.1 and 0.9",
+            ));
+        }
         self.border_rgba()?;
         for d in &self.displays {
             let n =
@@ -977,6 +986,9 @@ border_width = 2
 border_color = "accent"
 dim_unfocused = 0
 
+# Width share of the large tile in `layout master-stack` (0.1 to 0.9).
+master_ratio = 0.6
+
 # Apps whose windows always start floating (bundle ids, or the executable
 # name for apps started from a terminal; * globs work).
 # float_apps = ["com.apple.calculator", "com.apple.systempreferences"]
@@ -1202,6 +1214,9 @@ mod tests {
         assert!(Config::parse("[settings]\nborder_color = \"blue\"\n").is_err());
         assert!(Config::parse("[settings]\nborder_width = 30\n").is_err());
         assert!(Config::parse("[settings]\ndim_unfocused = 0.9\n").is_err());
+        assert_eq!(Config::default().settings.master_ratio, 0.6);
+        assert!(Config::parse("[settings]\nmaster_ratio = 0.7\n").is_ok());
+        assert!(Config::parse("[settings]\nmaster_ratio = 0.95\n").is_err());
     }
 
     #[test]

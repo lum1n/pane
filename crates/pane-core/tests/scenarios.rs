@@ -1909,3 +1909,176 @@ fn summon_brings_a_window_here() {
     });
     assert_eq!(s.launches, vec!["com.example.c".to_string()]);
 }
+
+fn layout(s: &mut Sim, text: &str) {
+    let c = Command::parse(text).unwrap();
+    assert!(matches!(s.cmd(c), Reply::Ok { .. }), "{text}");
+}
+
+fn share(s: &Sim, a: u32, b: u32) -> f64 {
+    s.frame(a).w / (s.frame(a).w + s.frame(b).w)
+}
+
+#[test]
+fn balance_evens_out_the_focused_container() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, "w", CENTER);
+    }
+    s.focus(100, 1);
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Horizontal,
+        delta: 0.2,
+    });
+    assert!(s.frame(1).w > s.frame(2).w + 100.0);
+    s.cmd(Command::Balance);
+    let w: Vec<f64> = (1..=3).map(|i| s.frame(i).w).collect();
+    assert!(w.iter().all(|x| (x - w[0]).abs() <= 1.0), "{w:?}");
+    // Only the focused container: a nested split stays as it is.
+    s.focus(100, 3);
+    s.cmd(Command::Move {
+        dir: Direction::Down,
+    });
+    assert_eq!(s.frame(3).w, 1908.0, "3 is a full-width row now");
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Vertical,
+        delta: 0.2,
+    });
+    s.focus(100, 1);
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Horizontal,
+        delta: 0.1,
+    });
+    let tall = s.frame(3).h;
+    s.cmd(Command::Balance);
+    assert!((s.frame(1).w - s.frame(2).w).abs() <= 1.0);
+    assert_eq!(s.frame(3).h, tall, "the outer split keeps its sizes");
+}
+
+#[test]
+fn master_stack_reshapes_as_windows_come_and_go() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.focus(100, 1);
+    layout(&mut s, "layout master-stack");
+    assert_eq!(s.frame(1).w, 1908.0, "alone it fills the display");
+    s.window(100, 2, "two", CENTER);
+    assert!((share(&s, 1, 2) - 0.6).abs() < 0.01, "default master_ratio");
+    s.window(100, 3, "three", CENTER);
+    s.window(100, 4, "four", CENTER);
+    // 1 stays the master; the others stack on the right, full height shared.
+    assert!((share(&s, 1, 2) - 0.6).abs() < 0.01);
+    assert_eq!(s.frame(1).h, 1038.0);
+    let stack: Vec<Rect> = (2..=4).map(|i| s.frame(i)).collect();
+    assert!(stack.iter().all(|r| r.x == stack[0].x && r.w == stack[0].w));
+    assert!(stack.iter().all(|r| r.h < 400.0), "{stack:?}");
+    assert!(stack[0].x > s.frame(1).x + s.frame(1).w);
+
+    // Closing the master promotes the first stacked window.
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    let ms = s.m.ws("C/1").unwrap();
+    let first = s.m.tree.windows(ms.root)[0];
+    assert_eq!(s.frame(first.0).h, 1038.0);
+    let other = (2..=4).find(|i| *i != first.0).unwrap();
+    assert!((share(&s, first.0, other) - 0.6).abs() < 0.01);
+
+    // A master widened by hand keeps its width when a window opens.
+    s.focus(100, first.0);
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Horizontal,
+        delta: 0.1,
+    });
+    s.window(100, 5, "five", CENTER);
+    assert!((share(&s, first.0, 5) - 0.7).abs() < 0.01);
+
+    // Kept across a restart.
+    let state: pane_core::state::State =
+        serde_json::from_str(&serde_json::to_string(&s.m.to_state()).unwrap()).unwrap();
+    let m2 = Model::from_state(Config::default(), &state, s.now);
+    assert!(matches!(
+        m2.ws("C/1").unwrap().layout,
+        Some(pane_core::workspace::LayoutMode::MasterStack { .. })
+    ));
+
+    // An explicit size wins; `manual` stops re-shaping.
+    layout(&mut s, "layout master-stack 50");
+    assert!((share(&s, first.0, 5) - 0.5).abs() < 0.01);
+    layout(&mut s, "layout manual");
+    assert!(s.m.ws("C/1").unwrap().layout.is_none());
+    s.focus(100, first.0);
+    s.window(100, 6, "six", CENTER);
+    assert!(
+        s.frame(6).h > 1000.0,
+        "inserted next to the master, unshaped"
+    );
+}
+
+#[test]
+fn columns_layout_spreads_tiles_and_keeps_n_columns() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    for i in 1..=5 {
+        s.window(100, i, "w", CENTER);
+    }
+    s.focus(100, 1);
+    layout(&mut s, "layout columns 3");
+    let xs: std::collections::BTreeSet<i64> =
+        (1..=5).map(|i| s.frame(i).x.round() as i64).collect();
+    assert_eq!(xs.len(), 3, "three columns");
+    let w: Vec<f64> = (1..=5).map(|i| s.frame(i).w).collect();
+    assert!(
+        w.iter().all(|x| (x - w[0]).abs() <= 1.0),
+        "equal widths {w:?}"
+    );
+    // 2 + 2 + 1: the last column is a single full-height tile.
+    assert_eq!(s.frame(5).h, 1038.0);
+    assert!(s.frame(1).h < 600.0);
+    s.window(100, 6, "w", CENTER);
+    let xs: std::collections::BTreeSet<i64> =
+        (1..=6).map(|i| s.frame(i).x.round() as i64).collect();
+    assert_eq!(xs.len(), 3, "still three columns");
+    assert!((1..=6).all(|i| s.frame(i).h < 600.0), "2 + 2 + 2");
+    // Fewer windows than columns: one column each.
+    for i in 3..=6 {
+        s.ev(Event::WindowDestroyed {
+            pid: 100,
+            wid: WindowId(i),
+        });
+    }
+    assert_eq!(s.frame(1).h, 1038.0);
+    assert!((s.frame(1).w - s.frame(2).w).abs() <= 1.0);
+
+    // Applying a profile replaces the preset with the profile's shape.
+    let p = pane_core::profile::Profile {
+        name: "p".into(),
+        version: 1,
+        when: None,
+        displays: vec![pane_core::profile::ProfileDisplay {
+            display: "center".into(),
+            workspace: "1".into(),
+            tree: slot("a"),
+            visible: true,
+        }],
+    };
+    s.cmd(Command::ProfileApply {
+        name: None,
+        profile: Some(p),
+    });
+    assert!(s.m.ws("C/1").unwrap().layout.is_none());
+}
+
+#[test]
+fn layout_commands_are_in_the_palette() {
+    let mut s = Sim::new();
+    let items = search(&mut s, ">layout");
+    let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+    assert!(titles.contains(&"Layout: master and stack"), "{titles:?}");
+    assert!(titles.contains(&"Layout: 3 columns"), "{titles:?}");
+    let items = search(&mut s, ">balance");
+    assert_eq!(items[0].command, Command::Balance);
+}
