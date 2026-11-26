@@ -57,7 +57,7 @@ pub fn search(m: &Model, query: &str, profiles: &[String]) -> Vec<PaletteItem> {
     }
     if commands_only || !terms.is_empty() {
         all.extend(profile_items(m, profiles).into_iter().map(|i| (i, 0)));
-        all.extend(command_items(m).into_iter().map(|i| (i, 0)));
+        all.extend(command_items(m, commands_only).into_iter().map(|i| (i, 0)));
     }
     if terms.is_empty() {
         // Windows by recency, the focused one at the end of them.
@@ -263,7 +263,9 @@ fn profile_items(m: &Model, profiles: &[String]) -> Vec<PaletteItem> {
 /// Commands that make sense without a shortcut, besides the bound ones.
 const EXTRA_COMMANDS: &[&str] = &["open-editor", "recover", "toggle-fullscreen", "reload"];
 
-fn command_items(m: &Model) -> Vec<PaletteItem> {
+/// `with_summon` adds a `summon APP` item per app with a window; plain
+/// searches leave them out so the window itself stays the top hit.
+fn command_items(m: &Model, with_summon: bool) -> Vec<PaletteItem> {
     let mut rows: Vec<(String, Option<String>)> = match m.config.binding_table() {
         Ok(t) => t
             .into_iter()
@@ -285,6 +287,15 @@ fn command_items(m: &Model) -> Vec<PaletteItem> {
             rows.push((c, None));
         }
     }
+    let mut apps: Vec<String> = m
+        .windows
+        .values()
+        .filter(|_| with_summon)
+        .map(|w| app_name(m, w.pid, &w.bundle_id))
+        .collect();
+    apps.sort();
+    apps.dedup();
+    rows.extend(apps.into_iter().map(|a| (format!("summon {a}"), None)));
     rows.into_iter()
         .filter_map(|(text, chord)| {
             let command = Command::parse(&text).ok()?;
@@ -314,6 +325,10 @@ fn humanize(text: &str) -> String {
         "scratchpad" => Some(format!(
             "Toggle scratchpad {}",
             text.split_whitespace().nth(1).unwrap_or("")
+        )),
+        "summon" => Some(format!(
+            "Summon {}",
+            text.split_once(' ').map_or("", |(_, a)| a)
         )),
         _ => None,
     };
@@ -352,5 +367,6 @@ mod tests {
         assert_eq!(humanize("move-to-workspace 3"), "Move to workspace 3");
         assert_eq!(humanize("toggle-float"), "Toggle float");
         assert_eq!(humanize("open-editor"), "Open profile editor");
+        assert_eq!(humanize("summon Visual Studio Code"), "Summon Visual Studio Code");
     }
 }

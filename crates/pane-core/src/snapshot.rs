@@ -28,6 +28,19 @@ pub struct Snapshot {
     /// How the shell draws the focus border and dimming.
     #[serde(default)]
     pub appearance: SnapAppearance,
+    /// The `[[scratchpad]]`s, for the menu.
+    #[serde(default)]
+    pub scratchpads: Vec<SnapScratchpad>,
+}
+
+/// A configured scratchpad and whether its window is on screen.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SnapScratchpad {
+    pub name: String,
+    pub app: String,
+    /// Chord that toggles it, if it has one.
+    pub key: Option<String>,
+    pub shown: bool,
 }
 
 /// Focus border and dimming, from `[settings]`.
@@ -202,5 +215,19 @@ pub fn build(m: &Model) -> Snapshot {
             border_color: m.config.border_rgba().unwrap_or(None),
             dim_unfocused: m.config.settings.dim_unfocused,
         },
+        scratchpads: m
+            .config
+            .scratchpads
+            .iter()
+            .map(|sp| SnapScratchpad {
+                name: sp.name().to_string(),
+                app: sp.app.clone(),
+                key: sp.key.clone(),
+                shown: m
+                    .scratch
+                    .get(sp.name())
+                    .is_some_and(|w| m.windows.contains_key(w) && !m.scratch_hidden.contains(w)),
+            })
+            .collect(),
     }
 }

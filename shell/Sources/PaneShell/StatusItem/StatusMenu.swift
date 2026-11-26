@@ -50,6 +50,21 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 }
             }
             menu.addItem(.separator())
+            let pads = NSMenuItem(title: "Scratchpads", action: nil, keyEquivalent: "")
+            let padMenu = NSMenu()
+            for sp in s.scratchpads ?? [] {
+                let i = item(sp.name, #selector(toggleScratchpad(_:)), obj: sp.name)
+                i.state = sp.shown ? .on : .off
+                if let k = sp.key { i.toolTip = "Key: \(k)" }
+                padMenu.addItem(i)
+            }
+            if padMenu.items.isEmpty {
+                let i = item("None — add a [[scratchpad]] to config.toml", nil)
+                i.isEnabled = false
+                padMenu.addItem(i)
+            }
+            pads.submenu = padMenu
+            menu.addItem(pads)
             let profiles = NSMenuItem(title: s.active_profile.map { "Profile: \($0)" } ?? "Profiles", action: nil, keyEquivalent: "")
             let sub = NSMenu()
             let desk = s.desk_profiles ?? []
@@ -106,6 +121,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func showWorkspace(_ sender: NSMenuItem) {
         if let n = sender.representedObject as? String { PaneCore.shared.showWorkspace(n) }
+    }
+
+    @objc private func toggleScratchpad(_ sender: NSMenuItem) {
+        guard let n = sender.representedObject as? String else { return }
+        if case let .error(m) = PaneCore.shared.send(["cmd": "scratchpad", "name": n]) { NoticeHUD.shared.show(m) }
     }
 
     @objc private func applyProfile(_ sender: NSMenuItem) {
