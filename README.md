@@ -42,6 +42,17 @@ All shortcuts are built on one **modifier** (`mod`, Option by default). Change i
 
 You can also resize with the mouse: drag the edge a tiled window shares with a neighbour. When you let go, the tile keeps its new size and only that neighbour gives or takes space. Dragging an outer screen edge snaps the window back.
 
+To move a window with the mouse, hold the modifier (Option by default) over it and point somewhere else; no click needed. An outline shows where the window will go and how it will tile. Release the modifier to drop it there, or press Escape to cancel:
+
+| Point at | The window |
+|---|---|
+| the middle of another tile | swaps places with it |
+| near an edge of another tile | splits that tile and goes on that side |
+| the outer edge of a screen (48 pt band) | becomes a full-height column or full-width row on that side |
+| a screen with no tiles | fills that screen |
+
+Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Hotkeys or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
+
 The `pane` CLI talks to the running app over a Unix socket:
 
 ```sh

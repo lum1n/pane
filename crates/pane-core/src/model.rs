@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::config::{Config, ConfigError};
 use crate::display::Display;
+use crate::drop::DropTarget;
 use crate::geometry::{Rect, Size};
 use crate::identity::PlacementRecord;
 use crate::rules::{Rule, WindowRole};
@@ -76,6 +77,14 @@ pub struct SentFrame {
     pub parked: bool,
 }
 
+/// A window being moved by holding the modifier and pointing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gesture {
+    pub wid: WindowId,
+    /// Where it would go if dropped now (what the overlay shows).
+    pub target: Option<DropTarget>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingSlot {
     pub request_id: u64,
@@ -124,6 +133,8 @@ pub struct Model {
     /// Tiled windows the user is resizing by dragging an edge: the latest
     /// frame seen and when to commit it as new tile weights.
     pub drags: BTreeMap<WindowId, (Rect, u64)>,
+    /// The gesture in progress (runtime only, not persisted).
+    pub gesture: Option<Gesture>,
     /// Target frame per window from the last reconcile.
     pub desired: BTreeMap<WindowId, Rect>,
     /// Frames of profile slots waiting for their app, per workspace.
@@ -175,6 +186,7 @@ impl Model {
             os_focus: None,
             last_sent: BTreeMap::new(),
             drags: BTreeMap::new(),
+            gesture: None,
             desired: BTreeMap::new(),
             slot_frames: vec![],
             parked: BTreeMap::new(),

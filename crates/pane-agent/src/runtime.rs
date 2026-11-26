@@ -496,7 +496,8 @@ impl Core {
             return;
         };
         let bindings = self.m.config.bindings().unwrap_or_default();
-        match self.platform.start_hotkeys(&bindings, tx) {
+        let gesture = self.m.config.gesture_mods().ok().flatten();
+        match self.platform.start_hotkeys(&bindings, gesture, tx) {
             Ok(h) => self.hotkeys = Some(h),
             Err(e) => {
                 tracing::warn!("hotkeys: {e}");
@@ -660,10 +661,18 @@ impl Core {
     }
 
     fn request(&self, r: UiRequest) {
+        // Overlay updates follow the pointer: keep them out of the info log.
+        if matches!(
+            r,
+            UiRequest::GestureOverlay { .. } | UiRequest::GestureOverlayHide
+        ) {
+            tracing::debug!("ui request: {r:?}");
+        }
         match (&self.on_request, serde_json::to_string(&r)) {
             (Some(sink), Ok(json)) => sink(&json),
             (None, _) => match &r {
                 UiRequest::Notice { message, .. } => tracing::info!("notice: {message}"),
+                UiRequest::GestureOverlay { .. } | UiRequest::GestureOverlayHide => {}
                 other => tracing::info!("ui request: {other:?}"),
             },
             _ => {}
@@ -706,11 +715,12 @@ impl Core {
             Ok(text) => match Config::parse(&text) {
                 Ok(c) => {
                     let bindings = c.bindings().unwrap_or_default();
+                    let gesture = c.gesture_mods().ok().flatten();
                     self.reduce(Event::ConfigLoaded {
                         config: Box::new(c),
                     });
                     if let Some(h) = &self.hotkeys {
-                        h.update(&bindings);
+                        h.update(&bindings, gesture);
                     }
                     Reply::ok()
                 }

@@ -19,6 +19,8 @@ float_apps = ["com.apple.calculator"]   # always start floating (bundle id or ex
 tile_apps = ["my-app"]           # always tile, even if Pane would float them
 modifier = "alt"                 # behind every default hotkey: "alt", "ctrl-alt", "cmd-ctrl",
                                  # "hyper" (cmd-ctrl-alt-shift), "meh" (ctrl-alt-shift)
+gestures = true                  # hold the modifier and point to move windows
+gesture_modifier = ""            # keys for gestures; empty = same as `modifier`
 
 # Name displays. Each alias needs exactly one of: position, uuid, match_name.
 [[display]]

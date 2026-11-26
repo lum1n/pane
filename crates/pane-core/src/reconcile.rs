@@ -7,10 +7,35 @@ use crate::layout::{self, LayoutInput};
 use crate::model::{Model, SentFrame, WindowMode, RETRY_BACKOFF_MS};
 use crate::proto::UiRequest;
 use crate::state::ParkedEntry;
-use crate::tree::Leaf;
+use crate::tree::{Leaf, NodeId, Tree};
 use crate::WindowId;
 
 const MAX_OVERFLOW_PASSES: usize = 8;
+
+/// Lay out the workspace tree at `root` (in `tree`, which may be a scratch
+/// copy of `m.tree`) inside `area`. `also_present` counts as a tiled window
+/// even if it is floating now (a gesture preview).
+pub fn layout_root(
+    m: &Model,
+    tree: &Tree,
+    root: NodeId,
+    area: Rect,
+    also_present: Option<WindowId>,
+) -> layout::LayoutOutput {
+    let present =
+        |l: &Leaf| (also_present.is_some() && l.window() == also_present) || m.leaf_present(l);
+    let min = |l: &Leaf| m.leaf_min_size(l);
+    layout::compute(
+        tree,
+        root,
+        area,
+        &LayoutInput {
+            inner_gap: m.config.settings.inner_gap,
+            present: &present,
+            min_size: &min,
+        },
+    )
+}
 
 /// Recompute `m.desired` for every window. Floats the newest window of any
 /// container whose minimum sizes cannot fit; returns notices about that.
@@ -26,19 +51,7 @@ pub fn refresh_desired(m: &mut Model) -> Vec<Effect> {
             let Some(ws) = m.visible.get(&d.id).and_then(|w| m.ws(w)) else {
                 continue;
             };
-            let area = m.tiling_area(d);
-            let present = |l: &Leaf| m.leaf_present(l);
-            let min = |l: &Leaf| m.leaf_min_size(l);
-            let out = layout::compute(
-                &m.tree,
-                ws.root,
-                area,
-                &LayoutInput {
-                    inner_gap: m.config.settings.inner_gap,
-                    present: &present,
-                    min_size: &min,
-                },
-            );
+            let out = layout_root(m, &m.tree, ws.root, m.tiling_area(d), None);
             for (node, rect) in out.frames {
                 match m.tree.leaf(node) {
                     Some(Leaf::Window(w)) => {

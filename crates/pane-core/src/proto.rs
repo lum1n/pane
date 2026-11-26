@@ -5,7 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{Direction, Orientation};
+use crate::geometry::{Direction, Orientation, Rect};
+use crate::gesture::GesturePhase;
 use crate::profile::{Profile, ProfileEdit};
 use crate::workspace::Cycle;
 
@@ -106,6 +107,11 @@ pub enum Command {
         suspended: bool,
     },
     Ping,
+    /// Input from the gesture tracker (hold the modifier and point). Not in
+    /// the text form; send JSON to test it.
+    Gesture {
+        phase: GesturePhase,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +268,16 @@ pub enum UiRequest {
     OpenEditor,
     ProfilePicker,
     AxPermissionMissing,
+    /// Show where a window moved by a gesture will go: `frame` is the frame
+    /// it will get, `target` the tile being split (if any). Global
+    /// top-left points.
+    GestureOverlay {
+        frame: Rect,
+        #[serde(default)]
+        target: Option<Rect>,
+        label: String,
+    },
+    GestureOverlayHide,
 }
 
 impl UiRequest {

@@ -6,12 +6,14 @@ use serde::Serialize;
 
 use crate::assign::{assign, next_free_name, AssignInput, WsInput};
 use crate::display::{display_for_rect, park_corners, rank_displays, DisplayRef, Position};
+use crate::drop::{self, DropTarget, Source};
 use crate::effect::Effect;
 use crate::event::{Event, WindowProbe};
-use crate::geometry::{neighbor_in_direction, Direction, Orientation, Rect};
+use crate::geometry::{neighbor_in_direction, Direction, Orientation, Point, Rect};
+use crate::gesture::GesturePhase;
 use crate::identity::{match_windows, PlacementRecord, WindowFingerprint};
 use crate::model::{
-    AppInfo, Model, PendingSlot, WindowInfo, WindowMode, FOLLOW_SUPPRESS_MS, GHOST_TTL_MS,
+    AppInfo, Gesture, Model, PendingSlot, WindowInfo, WindowMode, FOLLOW_SUPPRESS_MS, GHOST_TTL_MS,
     MAX_RECORDS_PER_APP, PENDING_SLOT_MS, RESYNC_DELAY_MS, UNRESPONSIVE_AFTER_MS, WATCHDOG_MS,
 };
 use crate::profile::{title_matches, Profile, ProfileDisplay};
@@ -107,6 +109,7 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
             reconcile::on_frame_applied(m, wid, gen, ok, actual, &mut fx);
         }
         Event::DisplaysChanged { mut displays } => {
+            cancel_gesture(m, &mut fx);
             rank_displays(&mut displays);
             m.displays = displays;
             reassign(m);
@@ -192,9 +195,17 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
             m.resync_at = Some(now_ms + RESYNC_DELAY_MS);
         }
         Event::Shutdown => {
+            cancel_gesture(m, &mut fx);
             m.shutting_down = true;
             m.layout_dirty = true;
         }
+    }
+    // The window being moved is gone.
+    if m.gesture
+        .as_ref()
+        .is_some_and(|g| !m.windows.contains_key(&g.wid))
+    {
+        cancel_gesture(m, &mut fx);
     }
     fx
 }
@@ -1470,6 +1481,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         | Command::ProfileDelete { .. }
         | Command::ProfileList => Reply::err("profile storage is handled by the runtime"),
         Command::Ping => Reply::data(&"pong"),
+        Command::Gesture { phase } => cmd_gesture(m, phase, fx),
     };
     gc_workspaces(m);
     r
@@ -2407,4 +2419,179 @@ pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply 
         launching,
         missing_displays: missing,
     })
+}
+
+// ---------------------------------------------------------------- gestures
+
+fn cancel_gesture(m: &mut Model, fx: &mut Vec<Effect>) {
+    if m.gesture.take().is_some() {
+        fx.push(Effect::UiRequest(UiRequest::GestureOverlayHide));
+    }
+}
+
+/// The window drawn at `at` on a visible workspace: floats first (the
+/// focused one first), then a zoomed tile, then tiles.
+fn window_at(m: &Model, at: Point) -> Option<WindowId> {
+    let shown = |wid: &WindowId| m.windows.get(wid).filter(|w| !w.minimized);
+    for d in &m.displays {
+        let Some(ws) = m.visible_ws(&d.id) else {
+            continue;
+        };
+        let mut floats: Vec<WindowId> = ws.floating.iter().rev().copied().collect();
+        if let Some(i) = floats.iter().position(|f| Some(*f) == m.focus_window) {
+            let f = floats.remove(i);
+            floats.insert(0, f);
+        }
+        for f in floats {
+            if let Some(w) = shown(&f) {
+                if w.float_frame.unwrap_or(w.actual).contains(at) {
+                    return Some(f);
+                }
+            }
+        }
+        if let Some(z) = ws.fullscreen.filter(|z| shown(z).is_some()) {
+            if d.visible_frame.contains(at) {
+                return Some(z);
+            }
+        }
+        for wid in m.tree.windows(ws.root) {
+            if shown(&wid).is_some_and(|w| w.mode == WindowMode::Tiled)
+                && m.desired.get(&wid).is_some_and(|r| r.contains(at))
+            {
+                return Some(wid);
+            }
+        }
+    }
+    None
+}
+
+fn cmd_gesture(m: &mut Model, phase: GesturePhase, fx: &mut Vec<Effect>) -> Reply {
+    match phase {
+        GesturePhase::Begin { at, pointer } => {
+            cancel_gesture(m, fx);
+            if let Some(wid) = window_at(m, at) {
+                m.gesture = Some(Gesture { wid, target: None });
+                gesture_move(m, pointer, fx);
+            }
+        }
+        GesturePhase::Move { at } => gesture_move(m, at, fx),
+        GesturePhase::Drop { at } => {
+            let Some(g) = m.gesture.take() else {
+                return Reply::ok();
+            };
+            fx.push(Effect::UiRequest(UiRequest::GestureOverlayHide));
+            if !m.windows.contains_key(&g.wid) {
+                return Reply::ok();
+            }
+            if let Some(t) = drop::target_at(m, g.wid, at) {
+                drop_window(m, g.wid, &t, fx);
+            }
+        }
+        GesturePhase::Cancel => cancel_gesture(m, fx),
+    }
+    Reply::ok()
+}
+
+fn gesture_move(m: &mut Model, at: Point, fx: &mut Vec<Effect>) {
+    let Some(g) = m.gesture.clone() else { return };
+    if !m.windows.contains_key(&g.wid) {
+        cancel_gesture(m, fx);
+        return;
+    }
+    let target = drop::target_at(m, g.wid, at);
+    if target == g.target {
+        return;
+    }
+    let shown = target
+        .as_ref()
+        .and_then(|t| drop::preview(m, g.wid, t).map(|p| (p, drop::label(m, t))));
+    m.gesture = Some(Gesture {
+        wid: g.wid,
+        target: target.filter(|_| shown.is_some()),
+    });
+    fx.push(Effect::UiRequest(match shown {
+        Some(((frame, target), label)) => UiRequest::GestureOverlay {
+            frame,
+            target,
+            label,
+        },
+        None => UiRequest::GestureOverlayHide,
+    }));
+}
+
+/// Carry out a gesture drop: `wid` goes to `target` and is tiled there.
+fn drop_window(m: &mut Model, wid: WindowId, target: &DropTarget, fx: &mut Vec<Effect>) {
+    let Some(dst) = drop::target_ws(m, target) else {
+        return;
+    };
+    let w = m.windows[&wid].clone();
+    let src = w.workspace.clone();
+    for ws in [&src, &dst] {
+        if let Some(x) = m.ws_mut(ws) {
+            if x.fullscreen.take().is_some() {
+                m.layout_dirty = true;
+            }
+        }
+    }
+    let root = m.ws(&dst).unwrap().root;
+    let tiled_node = m.window_node(wid).filter(|_| w.mode == WindowMode::Tiled);
+    match (target, tiled_node) {
+        (DropTarget::Swap { other }, Some(n)) => {
+            // Both stay tiles; across workspaces they trade workspaces too.
+            drop::apply(&mut m.tree, root, Source::Leaf(n), target);
+            if src != dst {
+                m.windows.get_mut(other).unwrap().workspace = src.clone();
+                if let Some(x) = m.ws_mut(&src) {
+                    if x.focused == Some(wid) {
+                        x.focused = Some(*other);
+                    }
+                }
+                if let Some(x) = m.ws_mut(&dst) {
+                    if x.focused == Some(*other) {
+                        x.focused = None;
+                    }
+                }
+            }
+            refresh_record(m, *other);
+        }
+        (DropTarget::Swap { other }, None) => {
+            // A floating window takes the tile; the other window floats
+            // where it was.
+            detach_window(m, wid, false);
+            drop::apply(&mut m.tree, root, Source::New(Leaf::Window(wid)), target);
+            if let Some(x) = m.ws_mut(&dst) {
+                if x.focused == Some(*other) {
+                    x.focused = None;
+                }
+            }
+            let o = m.windows.get_mut(other).unwrap();
+            o.mode = WindowMode::Floating;
+            o.workspace = src.clone();
+            o.float_frame = Some(w.float_frame.unwrap_or(w.actual));
+            o.reason = "floated by a gesture swap".into();
+            if let Some(x) = m.ws_mut(&src) {
+                x.floating.push(*other);
+            }
+            refresh_record(m, *other);
+        }
+        _ => {
+            detach_window(m, wid, false);
+            drop::apply(&mut m.tree, root, Source::New(Leaf::Window(wid)), target);
+        }
+    }
+    let wi = m.windows.get_mut(&wid).unwrap();
+    wi.mode = WindowMode::Tiled;
+    wi.workspace = dst.clone();
+    wi.stubborn = false;
+    if w.mode == WindowMode::Floating {
+        wi.reason = "tiled by a gesture".into();
+    }
+    m.ghosts.remove(&wid);
+    m.drags.remove(&wid);
+    m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
+    focus_fx(m, wid, fx);
+    refresh_record(m, wid);
+    m.layout_dirty = true;
+    fx.push(Effect::PersistState);
+    fx.push(Effect::Snapshot);
 }

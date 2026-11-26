@@ -49,6 +49,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             launch(bundle: bundle, args: r["args"] as? [String] ?? [], requestId: id)
         case "notice":
             if let m = r["message"] as? String { NoticeHUD.shared.show(m) }
+        case "gesture_overlay":
+            guard let frame = GestureOverlay.rect(r["frame"]) else { return }
+            GestureOverlay.shared.show(
+                frame: frame,
+                target: GestureOverlay.rect(r["target"]),
+                label: r["label"] as? String ?? ""
+            )
+        case "gesture_overlay_hide":
+            GestureOverlay.shared.hide()
         case "open_editor":
             showEditor()
         case "profile_picker":

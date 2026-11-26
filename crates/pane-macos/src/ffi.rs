@@ -160,8 +160,15 @@ pub type CGEventTapCallBack = unsafe extern "C" fn(
 
 pub const kCGSessionEventTap: u32 = 1;
 pub const kCGHeadInsertEventTap: u32 = 0;
+pub const kCGTailAppendEventTap: u32 = 1;
 pub const kCGEventTapOptionDefault: u32 = 0;
+pub const kCGEventTapOptionListenOnly: u32 = 1;
+pub const kCGEventLeftMouseDown: u32 = 1;
+pub const kCGEventRightMouseDown: u32 = 3;
+pub const kCGEventMouseMoved: u32 = 5;
 pub const kCGEventKeyDown: u32 = 10;
+pub const kCGEventFlagsChanged: u32 = 12;
+pub const kCGEventOtherMouseDown: u32 = 25;
 pub const kCGEventTapDisabledByTimeout: u32 = 0xFFFF_FFFE;
 pub const kCGEventTapDisabledByUserInput: u32 = 0xFFFF_FFFF;
 pub const kCGKeyboardEventKeycode: u32 = 9;
@@ -198,6 +205,8 @@ extern "C" {
     pub fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
     pub fn CGEventGetIntegerValueField(ev: CGEventRef, field: u32) -> i64;
     pub fn CGEventGetFlags(ev: CGEventRef) -> u64;
+    /// Global top-left coordinates.
+    pub fn CGEventGetLocation(ev: CGEventRef) -> CGPoint;
 }
 
 #[link(name = "ColorSync", kind = "framework")]

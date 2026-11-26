@@ -1369,3 +1369,238 @@ fn hiding_never_marks_windows_stubborn() {
         }
     }
 }
+
+// ---------------------------------------------------------------- gestures
+
+use pane_core::geometry::Point;
+use pane_core::gesture::GesturePhase;
+
+fn pt(x: f64, y: f64) -> Point {
+    Point { x, y }
+}
+
+impl Sim {
+    fn gesture_fx(&mut self, phase: GesturePhase) -> Vec<Effect> {
+        self.ev(Event::Command {
+            cmd: Command::Gesture { phase },
+            token: None,
+        })
+    }
+}
+
+fn overlay(fx: &[Effect]) -> Option<(Rect, String)> {
+    fx.iter().rev().find_map(|f| match f {
+        Effect::UiRequest(UiRequest::GestureOverlay { frame, label, .. }) => {
+            Some((*frame, label.clone()))
+        }
+        _ => None,
+    })
+}
+
+/// Point at `from`, move to `to`, release. Returns the overlay shown
+/// before the drop; checks the window then has exactly that frame.
+impl Sim {
+    fn gesture(&mut self, wid: u32, from: Point, to: Point) -> Option<(Rect, String)> {
+        let s = self;
+        let fx = s.gesture_fx(GesturePhase::Begin {
+            at: from,
+            pointer: to,
+        });
+        let shown = overlay(&fx);
+        let fx = s.gesture_fx(GesturePhase::Drop { at: to });
+        assert!(fx
+            .iter()
+            .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
+        assert!(s.m.gesture.is_none());
+        if let Some((frame, _)) = &shown {
+            assert_eq!(s.frame(wid), *frame, "preview equals the final frame");
+        }
+        shown
+    }
+}
+
+fn two_tiles() -> Sim {
+    let mut s = Sim::new();
+    s.launch(100, "Term");
+    s.window(100, 1, "one", CENTER);
+    s.window(100, 2, "two", CENTER);
+    s
+}
+
+#[test]
+fn gesture_swaps_tiles() {
+    let mut s = two_tiles();
+    let (a, b) = (s.frame(1), s.frame(2));
+    let shown = s.gesture(1, a.center(), b.center());
+    assert_eq!(shown.unwrap().1, "Swap with Term");
+    assert_eq!((s.frame(1), s.frame(2)), (b, a));
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+}
+
+#[test]
+fn gesture_splits_a_tile_on_each_side() {
+    for (fx, fy, dir) in [
+        (0.1, 0.5, Direction::Left),
+        (0.9, 0.5, Direction::Right),
+        (0.5, 0.1, Direction::Up),
+        (0.5, 0.9, Direction::Down),
+    ] {
+        let mut s = two_tiles();
+        let b = s.frame(2);
+        let at = pt(b.x + b.w * fx, b.y + b.h * fy);
+        let shown = s.gesture(1, s.frame(1).center(), at).expect("overlay");
+        let (one, two) = (s.frame(1), s.frame(2));
+        match dir {
+            Direction::Left => {
+                assert_eq!(shown.1, "Left of Term");
+                assert!(one.x < two.x && one.w == two.w);
+            }
+            Direction::Right => assert!(one.x > two.x),
+            Direction::Up => {
+                assert_eq!(shown.1, "Above Term");
+                assert!(one.y < two.y && one.w == two.w && one.w > 1800.0);
+            }
+            Direction::Down => assert!(one.y > two.y && one.x == two.x),
+        }
+    }
+}
+
+#[test]
+fn gesture_to_a_display_edge_makes_a_full_column_or_row() {
+    let mut s = two_tiles();
+    s.window(100, 3, "three", CENTER);
+    let from = s.frame(3).center();
+    let shown = s.gesture(3, from, pt(20.0, 500.0)).unwrap();
+    assert_eq!(shown.1, "Left edge");
+    assert_eq!(s.frame(3).x, 6.0);
+    assert_eq!(s.frame(3).h, 1038.0);
+    let from = s.frame(3).center();
+    let shown = s.gesture(3, from, pt(900.0, 50.0)).unwrap();
+    assert_eq!(shown.1, "Top edge");
+    assert_eq!((s.frame(3).y, s.frame(3).w), (36.0, 1908.0));
+    assert!(s.frame(1).y > s.frame(3).max_y());
+}
+
+#[test]
+fn gesture_moves_to_another_display() {
+    let mut s = two_tiles();
+    let from = s.frame(2).center();
+    let shown = s.gesture(2, from, pt(2900.0, 500.0)).unwrap();
+    assert_eq!(shown.1, "Fill Display R");
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "R/1");
+    assert_eq!(s.frame(2), Rect::new(1926.0, 36.0, 1908.0, 1038.0));
+    assert_eq!(s.frame(1).w, 1908.0);
+    assert_eq!(s.m.focus_display.as_deref(), Some("R"));
+    // Back onto C with tiles there: split C's tile.
+    let one = s.frame(1);
+    s.gesture(2, s.frame(2).center(), pt(one.x + one.w * 0.9, 500.0))
+        .unwrap();
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "C/1");
+    assert!(s.frame(2).x > s.frame(1).x);
+    // Swapping across displays trades workspaces.
+    s.window(100, 3, "three", CENTER);
+    let three = s.frame(3);
+    s.cmd(Command::Workspace { name: "1".into() });
+    let r = s.m.windows[&WindowId(3)].workspace.clone();
+    s.gesture(3, three.center(), pt(2900.0, 500.0));
+    assert_ne!(s.m.windows[&WindowId(3)].workspace, r);
+    s.gesture(1, s.frame(1).center(), s.frame(3).center())
+        .unwrap();
+    assert_eq!(s.m.windows[&WindowId(1)].workspace, "R/1");
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/1");
+}
+
+#[test]
+fn gesture_tiles_a_floating_window() {
+    let mut s = two_tiles();
+    s.focus(100, 2);
+    s.cmd(Command::ToggleFloat);
+    assert_eq!(s.m.windows[&WindowId(2)].mode, WindowMode::Floating);
+    let from = s.frame(2).center();
+    let one = s.frame(1);
+    s.gesture(2, from, pt(one.x + one.w * 0.9, 500.0)).unwrap();
+    assert_eq!(s.m.windows[&WindowId(2)].mode, WindowMode::Tiled);
+    assert!(s.m.ws("C/1").unwrap().floating.is_empty());
+    assert!(s.frame(2).x > s.frame(1).x);
+}
+
+#[test]
+fn floating_window_swapped_with_a_tile_floats_the_tile() {
+    let mut s = two_tiles();
+    s.focus(100, 2);
+    s.cmd(Command::ToggleFloat);
+    let float = s.frame(2);
+    // Move the float off tile 1's centre so the centre hits the tile.
+    s.window(100, 3, "three", CENTER);
+    let target = s.frame(3).center();
+    s.gesture(2, float.center(), target);
+    assert_eq!(s.m.windows[&WindowId(2)].mode, WindowMode::Tiled);
+    assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Floating);
+    assert_eq!(s.frame(3), float);
+}
+
+#[test]
+fn gesture_cancel_and_nothing_under_the_pointer_change_nothing() {
+    let mut s = two_tiles();
+    let before = (s.frame(1), s.frame(2));
+    let fx = s.gesture_fx(GesturePhase::Begin {
+        at: s.frame(1).center(),
+        pointer: s.frame(2).center(),
+    });
+    assert!(overlay(&fx).is_some());
+    // Back over its own tile: the overlay goes away.
+    let fx = s.gesture_fx(GesturePhase::Move {
+        at: s.frame(1).center(),
+    });
+    assert!(fx
+        .iter()
+        .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
+    s.gesture_fx(GesturePhase::Cancel);
+    assert!(s.m.gesture.is_none());
+    s.gesture_fx(GesturePhase::Drop {
+        at: s.frame(2).center(),
+    });
+    assert_eq!((s.frame(1), s.frame(2)), before);
+    // The menu bar has no window.
+    s.gesture_fx(GesturePhase::Begin {
+        at: pt(500.0, 10.0),
+        pointer: s.frame(2).center(),
+    });
+    assert!(s.m.gesture.is_none());
+    // Dropping on the own tile does nothing.
+    s.gesture(1, s.frame(1).center(), pt(400.0, 600.0));
+    assert_eq!((s.frame(1), s.frame(2)), before);
+}
+
+#[test]
+fn gesture_drop_unzooms_and_closing_the_window_cancels() {
+    let mut s = two_tiles();
+    s.focus(100, 2);
+    s.cmd(Command::ToggleFullscreen);
+    assert_eq!(s.frame(2).w, 1920.0);
+    // The zoomed window is the one under the pointer.
+    s.gesture(2, pt(500.0, 500.0), pt(2900.0, 500.0)).unwrap();
+    assert!(s.m.ws("C/1").unwrap().fullscreen.is_none());
+    assert_eq!(s.frame(1).w, 1908.0);
+    // A drop onto a zoomed workspace un-zooms it.
+    s.focus(100, 2);
+    s.cmd(Command::ToggleFullscreen);
+    s.gesture(1, s.frame(1).center(), pt(1930.0 + 20.0, 500.0))
+        .unwrap();
+    assert!(s.m.ws("R/1").unwrap().fullscreen.is_none());
+    assert_eq!(s.frame(1).x, 1926.0);
+    // The window goes away mid-gesture.
+    s.gesture_fx(GesturePhase::Begin {
+        at: s.frame(1).center(),
+        pointer: pt(500.0, 500.0),
+    });
+    assert!(s.m.gesture.is_some());
+    let fx = s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    assert!(s.m.gesture.is_none());
+    assert!(fx
+        .iter()
+        .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
+}
