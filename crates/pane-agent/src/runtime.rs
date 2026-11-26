@@ -8,7 +8,7 @@ use std::sync::{Arc, Once};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{select, unbounded, Receiver, Sender};
-use pane_core::config::{default_shortcuts, Chord, Config, Mods, STARTER_CONFIG};
+use pane_core::config::{Chord, Config, Mods, STARTER_CONFIG};
 use pane_core::display::Display;
 use pane_core::effect::Effect;
 use pane_core::event::Event;
@@ -981,7 +981,8 @@ pub fn rebind_text(
     let base = cfg.modifier().map_err(|e| e.render())?;
     let cmd = Command::parse(command)?;
     let new = chord.map(|c| Chord::parse_with(c, &base)).transpose()?;
-    let defaults: Vec<Chord> = default_shortcuts(&base)
+    let defaults: Vec<Chord> = cfg
+        .default_bindings(&base)
         .into_iter()
         .filter(|(_, t)| Command::parse(t).ok().as_ref() == Some(&cmd))
         .filter_map(|(c, _)| Chord::parse_with(&c, &base).ok())
@@ -1060,6 +1061,17 @@ mod tests {
             chord_of(&Config::parse(&t4).unwrap(), "focus left"),
             vec!["cmd-ctrl-alt-y"]
         );
+    }
+
+    #[test]
+    fn rebinding_a_scratchpad_unbinds_its_key() {
+        let text = format!("{STARTER_CONFIG}\n[[scratchpad]]\napp = \"x\"\nkey = \"mod-grave\"\n");
+        // The scratchpad table comes after [shortcuts]; edit_table must cope.
+        let c = Config::parse(&text).unwrap();
+        assert_eq!(chord_of(&c, "scratchpad x"), vec!["alt-grave"]);
+        let t = rebind_text(&text, &c, "scratchpad x", Some("alt-t")).unwrap();
+        let c = Config::parse(&t).unwrap();
+        assert_eq!(chord_of(&c, "scratchpad x"), vec!["alt-t"]);
     }
 
     #[test]

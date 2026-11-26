@@ -112,6 +112,17 @@ pub enum Command {
     FocusWindow {
         wid: u32,
     },
+    /// Show the scratchpad `name` (`[[scratchpad]]`) on the focused display,
+    /// or hide it if it is shown and focused. Opens the app if needed.
+    Scratchpad {
+        name: String,
+    },
+    /// Bring a window of `app` (bundle id or app name) to the focused
+    /// workspace, next to the focused tile, and focus it. Opens the app if
+    /// it has no window.
+    Summon {
+        app: String,
+    },
     /// Open the window and command palette.
     Palette,
     /// Rank windows, workspaces, profiles and commands against `query`
@@ -209,6 +220,15 @@ impl Command {
                     .parse()
                     .map_err(|_| format!("`{s}`: bad window id"))?,
             },
+            "scratchpad" => Command::Scratchpad {
+                name: arg(1)?.to_string(),
+            },
+            "summon" => {
+                arg(1)?;
+                Command::Summon {
+                    app: parts[1..].join(" "),
+                }
+            }
             "search" => Command::Search {
                 query: parts[1..].join(" "),
                 profiles: vec![],
@@ -362,6 +382,19 @@ mod tests {
             }
         );
         assert!(Command::parse("focus-window x").is_err());
+        assert_eq!(
+            Command::parse("scratchpad term").unwrap(),
+            Command::Scratchpad {
+                name: "term".into()
+            }
+        );
+        assert_eq!(
+            Command::parse("summon Visual Studio Code").unwrap(),
+            Command::Summon {
+                app: "Visual Studio Code".into()
+            }
+        );
+        assert!(Command::parse("summon").is_err());
         assert_eq!(
             serde_json::to_string(&Reply::ok()).unwrap(),
             r#"{"status":"ok"}"#

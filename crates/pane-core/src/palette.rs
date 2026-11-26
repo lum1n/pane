@@ -271,9 +271,18 @@ fn command_items(m: &Model) -> Vec<PaletteItem> {
             .collect(),
         Err(_) => vec![],
     };
-    for c in EXTRA_COMMANDS {
-        if !rows.iter().any(|(t, _)| t == c) {
-            rows.push((c.to_string(), None));
+    let scratchpads = m
+        .config
+        .scratchpads
+        .iter()
+        .map(|s| format!("scratchpad {}", s.name()));
+    for c in EXTRA_COMMANDS
+        .iter()
+        .map(|c| c.to_string())
+        .chain(scratchpads)
+    {
+        if !rows.iter().any(|(t, _)| *t == c) {
+            rows.push((c, None));
         }
     }
     rows.into_iter()
@@ -302,6 +311,10 @@ fn humanize(text: &str) -> String {
         "recover" => Some("Recover hidden windows".to_string()),
         "reload" => Some("Reload config".to_string()),
         "profile-picker" => Some("Show profile picker".to_string()),
+        "scratchpad" => Some(format!(
+            "Toggle scratchpad {}",
+            text.split_whitespace().nth(1).unwrap_or("")
+        )),
         _ => None,
     };
     if let Some(n) = named {

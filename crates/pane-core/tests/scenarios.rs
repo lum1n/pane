@@ -1721,3 +1721,190 @@ fn palette_jump_ends_a_zoom_that_hides_the_window() {
     assert!(s.frame(2).w < 1000.0);
     assert_eq!(s.m.focused_window(), Some(WindowId(1)));
 }
+
+fn scratch_sim() -> Sim {
+    let cfg = Config::parse(
+        "[[scratchpad]]\nname = \"t\"\napp = \"term\"\nkey = \"mod-grave\"\nsize = \"50%x50%\"\n",
+    )
+    .unwrap();
+    let mut s = Sim::with(Model::new(cfg, 1_000_000));
+    s.tick(2000);
+    s
+}
+
+fn toggle(s: &mut Sim) {
+    assert_eq!(s.cmd(Command::Scratchpad { name: "t".into() }), Reply::ok());
+}
+
+#[test]
+fn scratchpad_opens_toggles_and_follows_the_focused_display() {
+    let mut s = scratch_sim();
+    s.launch(100, "com.apple.Safari");
+    s.window(100, 1, "web", CENTER);
+    s.focus(100, 1);
+    let full = s.frame(1);
+
+    // Not running: Pane opens it; its first window becomes the scratchpad,
+    // a centered float on the focused display.
+    toggle(&mut s);
+    assert_eq!(s.launches, vec!["term".to_string()]);
+    toggle(&mut s); // a second press while opening does not open it twice
+    assert_eq!(s.launches.len(), 1);
+    s.launch(200, "term");
+    s.window(200, 5, "zsh", CENTER);
+    assert_eq!(s.m.scratch.get("t"), Some(&WindowId(5)));
+    assert_eq!(s.m.windows[&WindowId(5)].mode, WindowMode::Floating);
+    assert_eq!(s.frame(5), Rect::new(480.0, 292.5, 960.0, 525.0));
+    assert_eq!(s.m.focused_window(), Some(WindowId(5)));
+    assert_eq!(s.frame(1), full, "a scratchpad takes no tile");
+    s.focus(200, 5);
+
+    // Shown and focused: the key hides it and focus goes back.
+    toggle(&mut s);
+    assert!(!s.on_screen(5));
+    assert_eq!(s.m.focused_window(), Some(WindowId(1)));
+    // A late report for the hidden window changes nothing.
+    s.ev(Event::FocusChanged {
+        frontmost: true,
+        activated: false,
+        pid: 200,
+        wid: Some(WindowId(5)),
+    });
+    assert!(!s.on_screen(5));
+    assert_eq!(s.m.focused_window(), Some(WindowId(1)));
+    // A hidden scratchpad is not a window of its workspace.
+    let snap = pane_core::snapshot::build(&s.m);
+    assert!(snap
+        .displays
+        .iter()
+        .all(|d| d.tiles.iter().all(|t| t.wid != Some(5))));
+
+    // On another display it comes up there, centered.
+    s.cmd(Command::FocusDisplay { which: Cycle::Next });
+    toggle(&mut s);
+    assert!(s.on_screen(5));
+    assert_eq!(s.m.windows[&WindowId(5)].workspace, "R/1");
+    assert_eq!(s.frame(5), Rect::new(2400.0, 292.5, 960.0, 525.0));
+    s.focus(200, 5);
+
+    // Shown but not focused: the key focuses it rather than hiding it.
+    s.cmd(Command::FocusDisplay { which: Cycle::Prev });
+    s.focus(100, 1);
+    toggle(&mut s);
+    assert!(s.on_screen(5));
+    assert_eq!(s.m.focused_window(), Some(WindowId(5)));
+    assert_eq!(s.m.windows[&WindowId(5)].workspace, "C/1");
+
+    // Closing it: the next press opens the app again.
+    s.ev(Event::WindowDestroyed {
+        pid: 200,
+        wid: WindowId(5),
+    });
+    assert!(s.m.scratch.is_empty());
+    toggle(&mut s);
+    assert_eq!(s.launches.len(), 2);
+}
+
+#[test]
+fn scratchpad_adopts_a_running_window_and_answers_cmd_tab() {
+    let mut s = scratch_sim();
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.launch(200, "term");
+    s.window(200, 5, "zsh", CENTER);
+    s.focus(100, 1);
+    assert!(s.frame(1).w < 1000.0, "both tiled");
+
+    // The app's tiled window becomes the scratchpad; its tile closes.
+    toggle(&mut s);
+    assert!(s.launches.is_empty());
+    assert_eq!(s.m.windows[&WindowId(5)].mode, WindowMode::Floating);
+    assert_eq!(s.frame(1).w, 1920.0 - 12.0);
+    s.focus(200, 5);
+    toggle(&mut s);
+    assert!(!s.on_screen(5));
+
+    // Workspace 1 still has the hidden float, but cycling skips it.
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.cmd(Command::CycleWorkspace { which: Cycle::Next });
+    assert_eq!(s.m.visible["C"], "C/1");
+    assert!(!s.on_screen(5), "showing its workspace keeps it hidden");
+
+    // Cmd-Tab to the app shows the scratchpad.
+    s.now += 2000;
+    s.focus(200, 5);
+    assert!(s.on_screen(5));
+    assert!(!s.m.scratch_hidden.contains(&WindowId(5)));
+
+    // Tiled meanwhile, then hidden: its tile closes again.
+    s.cmd(Command::ToggleFloat);
+    assert_eq!(s.m.windows[&WindowId(5)].mode, WindowMode::Tiled);
+    toggle(&mut s);
+    assert!(!s.on_screen(5));
+    assert_eq!(s.frame(1).w, 1920.0 - 12.0);
+
+    // The palette lists the scratchpad and jumping to it shows it.
+    s.cmd(Command::FocusWindow { wid: 5 });
+    assert!(s.on_screen(5));
+    let items = match s.cmd(Command::Search {
+        query: ">scratch".into(),
+        profiles: vec![],
+    }) {
+        Reply::Ok { data } => data,
+        r => panic!("{r:?}"),
+    };
+    assert_eq!(items[0]["title"], "Toggle scratchpad t");
+
+    // Dropped from the config: it lets go of the window.
+    s.ev(Event::ConfigLoaded {
+        config: Box::new(Config::default()),
+    });
+    assert!(s.m.scratch.is_empty());
+    assert!(s.m.scratch_hidden.is_empty());
+}
+
+#[test]
+fn summon_brings_a_window_here() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.launch(200, "com.example.b");
+    s.window(100, 1, "one", CENTER);
+    s.focus(100, 1);
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.window(200, 2, "two", CENTER);
+    s.focus(200, 2);
+    s.cmd(Command::Workspace { name: "1".into() });
+    assert!(!s.on_screen(2));
+
+    // By bundle id, ignoring case: it tiles next to the focused window.
+    assert_eq!(
+        s.cmd(Command::Summon {
+            app: "COM.EXAMPLE.B".into()
+        }),
+        Reply::ok()
+    );
+    assert_eq!(s.m.visible["C"], "C/1", "no workspace switch");
+    assert!(s.on_screen(2) && s.on_screen(1));
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "C/1");
+    assert_eq!(s.m.focused_window(), Some(WindowId(2)));
+    assert!(s.frame(1).w < 1000.0);
+
+    // From another display, floating windows keep their size.
+    s.cmd(Command::ToggleFloat);
+    let size = s.m.windows[&WindowId(2)].float_frame.unwrap().size();
+    s.cmd(Command::FocusDisplay { which: Cycle::Next });
+    s.cmd(Command::Summon {
+        app: "com.example.b".into(),
+    });
+    let f = s.frame(2);
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "R/1");
+    assert_eq!(f.size(), size);
+    assert!(f.x >= 1920.0);
+
+    // No window: open the app.
+    s.cmd(Command::Summon {
+        app: "com.example.c".into(),
+    });
+    assert_eq!(s.launches, vec!["com.example.c".to_string()]);
+}

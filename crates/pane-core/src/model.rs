@@ -93,6 +93,16 @@ pub struct PendingSlot {
     pub deadline_ms: u64,
 }
 
+/// An app Pane asked the shell to open for a scratchpad or `summon`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingLaunch {
+    pub request_id: u64,
+    pub bundle_id: String,
+    /// The scratchpad its first window becomes, if any.
+    pub scratchpad: Option<String>,
+    pub deadline_ms: u64,
+}
+
 pub const RETRY_BACKOFF_MS: [u64; 5] = [50, 150, 400, 1000, 2500];
 pub const UNRESPONSIVE_AFTER_MS: u64 = 2000;
 pub const PENDING_SLOT_MS: u64 = 30_000;
@@ -143,6 +153,11 @@ pub struct Model {
     pub slot_frames: Vec<(WorkspaceId, AppSlot, Rect)>,
     pub parked: BTreeMap<WindowId, ParkedEntry>,
     pub pending_slots: Vec<PendingSlot>,
+    pub pending_launches: Vec<PendingLaunch>,
+    /// Scratchpad name -> its window (persisted).
+    pub scratch: BTreeMap<String, WindowId>,
+    /// Scratchpad windows toggled off: parked wherever their workspace is.
+    pub scratch_hidden: BTreeSet<WindowId>,
     pub pending_restore: Vec<ParkedEntry>,
     pub restored_count: usize,
     /// Window leaves whose window is gone but may come back (unix ms since).
@@ -194,6 +209,9 @@ impl Model {
             slot_frames: vec![],
             parked: BTreeMap::new(),
             pending_slots: vec![],
+            pending_launches: vec![],
+            scratch: BTreeMap::new(),
+            scratch_hidden: BTreeSet::new(),
             pending_restore: vec![],
             restored_count: 0,
             ghosts: BTreeMap::new(),
@@ -287,6 +305,7 @@ impl Model {
         m.display_frames = state.display_frames.clone();
         m.display_names = state.display_names.clone();
         m.active_profile = state.active_profile.clone();
+        m.scratch = state.scratchpads.clone();
         m
     }
 
@@ -327,6 +346,7 @@ impl Model {
                 .values()
                 .filter_map(|w| w.slot.clone().map(|s| (w.id, s)))
                 .collect(),
+            scratchpads: self.scratch.clone(),
         }
     }
 
@@ -352,6 +372,20 @@ impl Model {
 
     pub fn is_visible(&self, ws: &str) -> bool {
         self.visible.values().any(|v| v == ws)
+    }
+
+    /// Is the window meant to be on screen: its workspace is shown and it
+    /// is not a scratchpad toggled off. (Minimized windows count as shown.)
+    pub fn window_shown(&self, w: &WindowInfo) -> bool {
+        self.is_visible(&w.workspace) && !self.scratch_hidden.contains(&w.id)
+    }
+
+    /// The scratchpad a window is, if any.
+    pub fn scratchpad_of(&self, wid: WindowId) -> Option<&str> {
+        self.scratch
+            .iter()
+            .find(|(_, w)| **w == wid)
+            .map(|(n, _)| n.as_str())
     }
 
     pub fn visible_ws(&self, display: &str) -> Option<&Workspace> {
@@ -486,10 +520,12 @@ impl Model {
     /// Is a leaf laid out? Ghosts, minimized and floating windows are not.
     pub fn leaf_present(&self, leaf: &Leaf) -> bool {
         match leaf {
-            Leaf::Window(w) => self
-                .windows
-                .get(w)
-                .is_some_and(|x| !x.minimized && x.mode == WindowMode::Tiled),
+            Leaf::Window(w) => {
+                self.windows
+                    .get(w)
+                    .is_some_and(|x| !x.minimized && x.mode == WindowMode::Tiled)
+                    && !self.scratch_hidden.contains(w)
+            }
             // A profile slot takes space only while its app is being launched;
             // otherwise it waits invisibly for the app's next window.
             Leaf::Slot(s) => self
@@ -521,6 +557,7 @@ impl Model {
                 .filter_map(|a| a.awaiting_since.map(|s| s + UNRESPONSIVE_AFTER_MS)),
         );
         t.extend(self.pending_slots.iter().map(|p| p.deadline_ms));
+        t.extend(self.pending_launches.iter().map(|p| p.deadline_ms));
         t.extend(self.drags.values().map(|d| d.1));
         t.extend(self.resync_at);
         if !self.windows.is_empty() {

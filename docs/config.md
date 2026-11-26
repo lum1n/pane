@@ -46,6 +46,14 @@ action = "float"                 # float | tile | ignore
 workspace = "3"                  # optional: where new windows go
 display = "right"                # optional: visible workspace of that display
 
+# A scratchpad: one window of `app`, toggled as a centered float on the
+# focused display. Opens the app if it is not running.
+[[scratchpad]]
+app = "com.googlecode.iterm2"    # bundle id (or executable name)
+key = "mod-grave"                # optional; [shortcuts] can override it
+size = "60%x50%"                 # optional, default 60%x60%; points work too: "1200x800"
+name = "term"                    # optional, for `scratchpad term`; defaults to app
+
 [shortcuts]                      # merged over the defaults; "mod" = the modifier above
 "mod-h" = "focus left"
 "mod-q" = "none"                 # unbind a default
@@ -76,6 +84,10 @@ Pane tiles standard, resizable windows of regular (Dock) apps. It floats:
 `float_apps`, `tile_apps` and `[[rule]]`s override this (rules first). Apps started from a terminal, such as `cargo run`, have no bundle id; Pane names them by their executable, e.g. `my-app`.
 
 `pane query windows` shows a `reason` for every window, for example `auto-float: not resizable`. `pane query apps` lists the apps Pane observes. If an app is missing from `pane query apps`, Pane has not seen a window from it.
+
+## Scratchpads
+
+A scratchpad's window floats on the workspace it was last shown on. Hidden, it is parked like a window of a hidden workspace, whichever workspace is shown, and it is not counted when cycling workspaces. Pressing the key while it is shown but not focused, or shown on another display, brings it to the focused display and focuses it instead of hiding it. It keeps a position you dragged it to on the same display; on another display it is centered again at `size`. Cmd-Tab or a Dock click on the app shows it. Pane remembers which window is the scratchpad across restarts; when that window closes, the next press opens a new one. Removing the `[[scratchpad]]` lets go of the window (shown again if it was hidden).
 
 ## Workspaces
 
@@ -113,6 +125,8 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `reload`, `profile-picker`, `open-editor` | |
 | `palette` | open the window and command palette (`mod-/`) |
 | `focus-window ID` | show the window's workspace and focus it, restoring it if minimized (`pane query windows` lists ids) |
+| `scratchpad NAME` | show the `[[scratchpad]]` NAME on the focused display (opening the app, or taking its window, the first time); hide it if it is shown there and focused |
+| `summon APP` | bring a window of APP (bundle id or app name, any case) to the focused workspace, next to the focused tile, and focus it; opens APP if it has no window |
 | `profile-apply NAME` | |
 | `recover`, `recover --all-apps` | |
 

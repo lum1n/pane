@@ -58,3 +58,13 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] A minimized window is restored when picked; a window behind a zoomed tile ends the zoom.
 - [ ] `>` lists commands with their shortcuts (⌥⇧F etc.); Enter runs one. Profiles apply.
 - [ ] Arrow keys, Page Up/Down and clicking a row work; app icons show.
+
+## Scratchpad and summon
+- [ ] With `[[scratchpad]] app = "com.googlecode.iterm2" key = "mod-grave"` and iTerm not running, Option-` opens iTerm and its first window appears as a centered float at the configured size on the focused display, focused.
+- [ ] Option-` again hides it and focus returns to the window you were in; Option-` brings it back. Nothing flashes in the park corner while it is shown.
+- [ ] With iTerm already running, Option-` takes its window (a tiled one leaves its tile, the others fill the space).
+- [ ] Focus another display, Option-`: it appears centered on that display.
+- [ ] Hidden, Cmd-Tab to iTerm shows it; the focus border follows it.
+- [ ] Hidden, the menu bar icon does not draw it; `pane query windows` shows `"visible": false`.
+- [ ] Quit Pane while it is hidden: the window comes back on screen.
+- [ ] `pane do "summon Safari"` from another workspace moves a Safari window next to the focused tile without switching workspace; with Safari not running it opens.
