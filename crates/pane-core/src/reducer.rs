@@ -24,6 +24,9 @@ use crate::{Pid, WindowId, WorkspaceId};
 
 /// Quiet time after a user move before a tiled window snaps back.
 pub const SNAP_BACK_MS: u64 = 300;
+/// A tiled window must change size by more than this (points) to count as
+/// an edge drag rather than rounding noise.
+const DRAG_THRESHOLD: f64 = 3.0;
 
 pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
     m.now_ms = now_ms;
@@ -1009,6 +1012,21 @@ fn frame_changed(m: &mut Model, wid: WindowId, frame: Rect, fx: &mut Vec<Effect>
             }
         }
         _ => {
+            // A tiled window whose size changed was resized by dragging an
+            // edge: once the drag stops, its tile takes that size.
+            if mode == WindowMode::Tiled && visible {
+                let old = m.last_sent.get(&wid).map(|s| s.rect);
+                let zoomed = m.ws(&ws).is_some_and(|w| w.fullscreen.is_some());
+                if let Some(old) = old.filter(|_| !zoomed) {
+                    if (frame.w - old.w).abs() > DRAG_THRESHOLD
+                        || (frame.h - old.h).abs() > DRAG_THRESHOLD
+                    {
+                        m.drags.insert(wid, (frame, m.now_ms + SNAP_BACK_MS));
+                    } else if let Some(d) = m.drags.get_mut(&wid) {
+                        *d = (frame, m.now_ms + SNAP_BACK_MS);
+                    }
+                }
+            }
             // Tiled windows snap back and parked windows get re-parked, but
             // only once the moves stop: resending on every event would fight
             // a drag in progress.
@@ -1199,8 +1217,68 @@ fn prune_ghosts(m: &mut Model, ws: &str) {
     }
 }
 
+/// Turn a finished edge drag into tile weights. `old` is the tile the
+/// window had; each axis whose edge moved resizes against the neighbour
+/// across that edge. A window dragged by its title bar keeps its size and
+/// never gets here.
+fn commit_drag(m: &mut Model, wid: WindowId, frame: Rect) {
+    let Some(old) = m.last_sent.get(&wid).map(|s| s.rect) else {
+        return;
+    };
+    let Some(node) = m.window_node(wid) else {
+        return;
+    };
+    let Some(root) = m.ws(&m.windows[&wid].workspace).map(|w| w.root) else {
+        return;
+    };
+    let present: std::collections::HashSet<NodeId> = m
+        .tree
+        .leaves(root)
+        .into_iter()
+        .filter(|n| m.tree.leaf(*n).is_some_and(|l| m.leaf_present(l)))
+        .collect();
+    let mut changed = false;
+    for axis in [Orientation::Horizontal, Orientation::Vertical] {
+        let (os, ol) = old.span(axis);
+        let (ns, nl) = frame.span(axis);
+        let (d_start, d_end) = (ns - os, (ns + nl) - (os + ol));
+        let t = DRAG_THRESHOLD;
+        // Exactly one edge moved; both moving means a move or a stretch.
+        let (delta, toward_next) = if d_start.abs() > t && d_end.abs() <= t {
+            (-d_start, false)
+        } else if d_end.abs() > t && d_start.abs() <= t {
+            (d_end, true)
+        } else {
+            continue;
+        };
+        changed |= m
+            .tree
+            .resize_edge(node, axis, delta, ol, toward_next, &present);
+    }
+    if changed {
+        m.layout_dirty = true;
+    }
+}
+
 fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
     let now = m.now_ms;
+    // Finished edge drags become the new layout.
+    let due: Vec<(WindowId, Rect)> = m
+        .drags
+        .iter()
+        .filter(|(_, d)| now >= d.1)
+        .map(|(w, d)| (*w, d.0))
+        .collect();
+    for (wid, frame) in due {
+        m.drags.remove(&wid);
+        commit_drag(m, wid, frame);
+        // Whether or not the layout changed, the window goes to its tile.
+        if let Some(s) = m.last_sent.get_mut(&wid) {
+            s.settled = false;
+            s.next_retry_ms = Some(now);
+        }
+        fx.push(Effect::PersistState);
+    }
     // Watchdog: a window of a shown workspace must be on screen. If one is
     // found hidden (an app undid our move, a lost update), send it again.
     if now >= m.next_watchdog_ms {

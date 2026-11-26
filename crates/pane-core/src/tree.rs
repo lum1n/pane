@@ -633,6 +633,61 @@ impl Tree {
         false
     }
 
+    /// Move one edge of `id` along `axis` by `delta_len` points (positive
+    /// grows the tile), as when the user drags that edge. `cur_len` is the
+    /// tile's current length along `axis`; `toward_next` picks the right or
+    /// bottom edge, otherwise the left or top one. Only the neighbour across
+    /// that edge gives or takes space. If the tile's edge is also the edge
+    /// of its container, the nearest ancestor split with a neighbour on
+    /// that side is used. `present` holds the leaves that take space.
+    /// Returns false when nothing could change.
+    pub fn resize_edge(
+        &mut self,
+        id: NodeId,
+        axis: Orientation,
+        delta_len: f64,
+        cur_len: f64,
+        toward_next: bool,
+        present: &std::collections::HashSet<NodeId>,
+    ) -> bool {
+        let is_present = |t: &Tree, n: NodeId| t.leaves(n).iter().any(|l| present.contains(l));
+        let mut child = id;
+        while let Some(p) = self.parent(child) {
+            let c = self.container(p).unwrap();
+            if c.orientation == axis && c.layout == ContainerLayout::Tiles {
+                let i = self.index_in_parent(child).unwrap();
+                let neighbour = if toward_next {
+                    (i + 1..c.children.len()).find(|j| is_present(self, c.children[*j]))
+                } else {
+                    (0..i).rev().find(|j| is_present(self, c.children[*j]))
+                };
+                if let Some(j) = neighbour {
+                    let sum_w: f64 = c
+                        .children
+                        .iter()
+                        .zip(&c.weights)
+                        .filter(|(ch, _)| is_present(self, **ch))
+                        .map(|(_, w)| *w)
+                        .sum();
+                    let (wi, wj) = (c.weights[i], c.weights[j]);
+                    let per_point = wi / cur_len.max(1.0);
+                    let min_w = MIN_SHARE * sum_w;
+                    let dw = (delta_len * per_point)
+                        .clamp(-(wi - min_w).max(0.0), (wj - min_w).max(0.0));
+                    if dw.abs() < 1e-9 {
+                        return false;
+                    }
+                    let c = self.container_mut(p).unwrap();
+                    c.weights[i] = wi + dw;
+                    c.weights[j] = wj - dw;
+                    return true;
+                }
+            }
+            child = p;
+        }
+        false
+    }
+
     pub fn to_ser(&self, id: NodeId) -> SerNode {
         match &self.nodes[id].kind {
             NodeKind::Leaf(Leaf::Window(w)) => SerNode::Window { id: *w },

@@ -854,6 +854,67 @@ fn dragged_tiled_window_snaps_back_after_the_drag() {
     assert_eq!(s.frame(1), home);
 }
 
+fn drag_to(s: &mut Sim, wid: u32, target: Rect) {
+    // A drag is a stream of frames; the app follows the mouse.
+    let from = s.frame(wid);
+    for i in 1..=5 {
+        let t = i as f64 / 5.0;
+        let r = Rect::new(
+            from.x + (target.x - from.x) * t,
+            from.y + (target.y - from.y) * t,
+            from.w + (target.w - from.w) * t,
+            from.h + (target.h - from.h) * t,
+        );
+        s.frames.insert(WindowId(wid), r);
+        s.now += 30;
+        s.ev(Event::WindowFrameChanged {
+            pid: 100,
+            wid: WindowId(wid),
+            frame: r,
+        });
+    }
+    s.tick(400);
+}
+
+#[test]
+fn dragging_a_tile_edge_resizes_against_its_neighbour_only() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, "w", CENTER);
+    }
+    let (a, b, c) = (s.frame(1), s.frame(2), s.frame(3));
+    assert!(a.x < b.x && b.x < c.x, "side by side: {a:?} {b:?} {c:?}");
+    // Drag the border between 1 and 2 right by 100 (window 1's right edge).
+    drag_to(&mut s, 1, Rect::new(a.x, a.y, a.w + 100.0, a.h));
+    let (a2, b2, c2) = (s.frame(1), s.frame(2), s.frame(3));
+    assert!((a2.w - (a.w + 100.0)).abs() <= 2.0, "grew: {a2:?}");
+    assert!(
+        (b2.w - (b.w - 100.0)).abs() <= 2.0,
+        "neighbour gave: {b2:?}"
+    );
+    assert_eq!(c2, c, "third tile untouched");
+    // Same border from the other side: window 2's left edge back left.
+    drag_to(&mut s, 2, Rect::new(b2.x - 100.0, b2.y, b2.w + 100.0, b2.h));
+    assert!((s.frame(1).w - a.w).abs() <= 2.0);
+    assert_eq!(s.frame(3), c);
+}
+
+#[test]
+fn dragging_an_outer_edge_snaps_back() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.window(100, 2, "two", CENTER);
+    let (a, b) = (s.frame(1), s.frame(2));
+    // Window 1's left edge is the screen edge: nothing to trade with.
+    drag_to(&mut s, 1, Rect::new(a.x + 80.0, a.y, a.w - 80.0, a.h));
+    assert_eq!(s.frame(1), a);
+    assert_eq!(s.frame(2), b);
+}
+
 #[test]
 fn unbundled_apps_tile_and_float_apps_float() {
     let mut s = Sim::new();

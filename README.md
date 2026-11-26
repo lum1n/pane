@@ -40,6 +40,8 @@ All shortcuts are built on one **modifier** (`mod`, Option by default). Change i
 | `mod-shift-r` | reload config |
 | `mod-shift-p` | profile picker |
 
+You can also resize with the mouse: drag the edge a tiled window shares with a neighbour. When you let go, the tile keeps its new size and only that neighbour gives or takes space. Dragging an outer screen edge snaps the window back.
+
 The `pane` CLI talks to the running app over a Unix socket:
 
 ```sh

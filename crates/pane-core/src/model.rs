@@ -121,6 +121,9 @@ pub struct Model {
     /// Window macOS last reported as focused in the frontmost app.
     pub os_focus: Option<WindowId>,
     pub last_sent: BTreeMap<WindowId, SentFrame>,
+    /// Tiled windows the user is resizing by dragging an edge: the latest
+    /// frame seen and when to commit it as new tile weights.
+    pub drags: BTreeMap<WindowId, (Rect, u64)>,
     /// Target frame per window from the last reconcile.
     pub desired: BTreeMap<WindowId, Rect>,
     /// Frames of profile slots waiting for their app, per workspace.
@@ -171,6 +174,7 @@ impl Model {
             focus_window: None,
             os_focus: None,
             last_sent: BTreeMap::new(),
+            drags: BTreeMap::new(),
             desired: BTreeMap::new(),
             slot_frames: vec![],
             parked: BTreeMap::new(),
@@ -502,6 +506,7 @@ impl Model {
                 .filter_map(|a| a.awaiting_since.map(|s| s + UNRESPONSIVE_AFTER_MS)),
         );
         t.extend(self.pending_slots.iter().map(|p| p.deadline_ms));
+        t.extend(self.drags.values().map(|d| d.1));
         t.extend(self.resync_at);
         if !self.windows.is_empty() {
             t.push(self.next_watchdog_ms.max(self.now_ms));
