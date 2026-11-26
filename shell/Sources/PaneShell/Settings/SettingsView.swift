@@ -55,7 +55,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520)
+        .frame(width: 520, height: 460)
         .padding(.vertical, 8)
         .onAppear {
             axGranted = Permissions.accessibilityGranted

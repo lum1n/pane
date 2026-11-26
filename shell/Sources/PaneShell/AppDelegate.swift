@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
             w.title = "Pane Settings"
             w.styleMask = [.titled, .closable]
+            w.setContentSize(NSSize(width: 520, height: 460))
             w.isReleasedWhenClosed = false
             settingsWindow = w
         }

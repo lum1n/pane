@@ -247,6 +247,7 @@ struct EditorRootView: View {
                 .padding(.vertical, 6)
             }
         }
+        .frame(minWidth: 960, idealWidth: 1180, minHeight: 560, idealHeight: 720)
         .onAppear { name = model.profile.name }
         .onChange(of: model.profile.name) { _, n in name = n }
     }
