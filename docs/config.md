@@ -111,6 +111,8 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `toggle-fullscreen` | zoom the focused tile to fill its display; ends when another window there is focused or a new tile opens |
 | `swap-workspaces` | swap with the next display |
 | `reload`, `profile-picker`, `open-editor` | |
+| `palette` | open the window and command palette (`mod-/`) |
+| `focus-window ID` | show the window's workspace and focus it, restoring it if minimized (`pane query windows` lists ids) |
 | `profile-apply NAME` | |
 | `recover`, `recover --all-apps` | |
 

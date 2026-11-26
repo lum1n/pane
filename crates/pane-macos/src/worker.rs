@@ -344,6 +344,17 @@ fn on_command(st: &Rc<RefCell<State>>, cmd: WorkerCmd) -> bool {
                 }
             }
         }
+        WorkerCmd::Restore { wid } => {
+            if let Some(el) = element(st, wid) {
+                let _ = el.set_bool("AXMinimized", false);
+                let _ = el.set_bool("AXMain", true);
+                let _ = el.perform("AXRaise");
+                let app = st.borrow().app.clone();
+                if app.set_bool("AXFrontmost", true).is_err() {
+                    crate::apps::activate(pid);
+                }
+            }
+        }
         WorkerCmd::Enumerate => enumerate(st, false),
         WorkerCmd::Recover { displays, known } => {
             let n = crate::recovery::sweep_app(pid, &displays, &known);

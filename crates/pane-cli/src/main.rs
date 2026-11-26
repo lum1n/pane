@@ -42,6 +42,9 @@ enum Cmd {
         action: String,
         name: Option<String>,
     },
+    /// Search windows, workspaces, profiles and commands like the palette
+    /// does: `pane search term`. Run an item with `pane do`.
+    Search { query: Vec<String> },
     /// Any command in shortcut syntax: `pane do "focus left"`.
     Do { command: Vec<String> },
     /// Check that Pane is running.
@@ -118,6 +121,10 @@ fn build(c: &Cmd) -> Result<Command, String> {
                 other => return Err(format!("unknown profile action `{other}`")),
             }
         }
+        Cmd::Search { query } => Command::Search {
+            query: query.join(" "),
+            profiles: vec![],
+        },
         Cmd::Do { command } => Command::parse(&command.join(" "))?,
         Cmd::Ping => Command::Ping,
     })

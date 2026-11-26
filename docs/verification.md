@@ -49,3 +49,12 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Apply a profile, then switch workspaces, open and close windows, quit and reopen apps, restart Pane: the layout stays the profile's (the menu shows "Profile: name" with a checkmark) until you apply another.
 - [ ] An app in the profile that is not running leaves no gap; when it opens, its window goes to its slot.
 - [ ] No window ever ends up parked in the corner of a display while its workspace is shown.
+
+## Palette
+- [ ] `mod-/` opens the palette centred on the focused display, above the focus border and dimming; typing works without Pane taking focus from the app you were in.
+- [ ] Escape, or clicking elsewhere, closes it and leaves focus where it was.
+- [ ] Empty query: the previously focused window is first; Enter goes back to it.
+- [ ] Typing part of an app name or title finds windows on all 3 displays, including hidden workspaces; Enter shows that workspace on its own display and focuses the window.
+- [ ] A minimized window is restored when picked; a window behind a zoomed tile ends the zoom.
+- [ ] `>` lists commands with their shortcuts (⌥⇧F etc.); Enter runs one. Profiles apply.
+- [ ] Arrow keys, Page Up/Down and clicking a row work; app icons show.

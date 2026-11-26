@@ -536,6 +536,7 @@ pub fn default_shortcuts(base: &Mods) -> Vec<(String, String)> {
     add(mv, "r", "reload".into());
     add(mv, "f", "toggle-fullscreen".into());
     add(mv, "p", "profile-picker".into());
+    add(b, "slash", "palette".into());
     for i in 1..=9 {
         add(b, &i.to_string(), format!("workspace {i}"));
         add(mv, &i.to_string(), format!("move-to-workspace {i}"));

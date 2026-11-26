@@ -63,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showEditor()
         case "profile_picker":
             statusMenu.popUpProfilePicker()
+        case "palette":
+            CommandPalette.shared.toggle()
         case "ax_permission_missing":
             if !shownAxPrompt {
                 shownAxPrompt = true

@@ -39,6 +39,11 @@ pub enum Effect {
         pid: Pid,
         wid: WindowId,
     },
+    /// Un-minimize, raise and give keyboard focus.
+    Restore {
+        pid: Pid,
+        wid: WindowId,
+    },
     /// Write `parked.json` (fsync + rename) before parking anything.
     WriteParked {
         entries: Vec<ParkedEntry>,

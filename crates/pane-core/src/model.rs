@@ -129,6 +129,8 @@ pub struct Model {
     pub focus_window: Option<WindowId>,
     /// Window macOS last reported as focused in the frontmost app.
     pub os_focus: Option<WindowId>,
+    /// When each window last had focus (ms), for the palette's ordering.
+    pub focus_seen: BTreeMap<WindowId, u64>,
     pub last_sent: BTreeMap<WindowId, SentFrame>,
     /// Tiled windows the user is resizing by dragging an edge: the latest
     /// frame seen and when to commit it as new tile weights.
@@ -184,6 +186,7 @@ impl Model {
             focus_display: None,
             focus_window: None,
             os_focus: None,
+            focus_seen: BTreeMap::new(),
             last_sent: BTreeMap::new(),
             drags: BTreeMap::new(),
             gesture: None,

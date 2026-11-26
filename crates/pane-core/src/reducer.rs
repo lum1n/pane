@@ -31,6 +31,19 @@ pub const SNAP_BACK_MS: u64 = 300;
 const DRAG_THRESHOLD: f64 = 3.0;
 
 pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
+    let fx = reduce_event(m, ev, now_ms);
+    // Remember when each window had focus (the palette lists by recency).
+    if let Some(w) = m.focus_window.filter(|w| m.windows.contains_key(w)) {
+        m.focus_seen.insert(w, now_ms);
+    }
+    if m.focus_seen.len() > m.windows.len() + 64 {
+        let live = &m.windows;
+        m.focus_seen.retain(|w, _| live.contains_key(w));
+    }
+    fx
+}
+
+fn reduce_event(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
     m.now_ms = now_ms;
     let mut fx = Vec::new();
     if let Some(pid) = ev.from_pid() {
@@ -1109,8 +1122,15 @@ fn focus_fx(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) {
     let Some(w) = m.windows.get(&wid).filter(|w| !w.minimized) else {
         return;
     };
-    let (pid, ws) = (w.pid, w.workspace.clone());
-    fx.push(Effect::Focus { pid, wid });
+    fx.push(Effect::Focus { pid: w.pid, wid });
+    set_focus(m, wid, fx);
+}
+
+/// Record `wid` as focused (the effect that focuses it is the caller's).
+fn set_focus(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) {
+    let Some(ws) = m.windows.get(&wid).map(|w| w.workspace.clone()) else {
+        return;
+    };
     m.os_focus = Some(wid);
     m.focus_window = Some(wid);
     m.focus_display = m.ws(&ws).map(|w| w.display.clone());
@@ -1482,9 +1502,46 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         | Command::ProfileList => Reply::err("profile storage is handled by the runtime"),
         Command::Ping => Reply::data(&"pong"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
+        Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
+        Command::Palette => {
+            fx.push(Effect::UiRequest(UiRequest::Palette));
+            Reply::ok()
+        }
+        Command::Search { query, profiles } => {
+            Reply::data(&crate::palette::search(m, &query, &profiles))
+        }
     };
     gc_workspaces(m);
     r
+}
+
+/// Jump to a window from the palette: show its workspace where it is,
+/// end a zoom that hides it, and restore it if minimized (the user asked
+/// for this very window).
+fn cmd_focus_window(m: &mut Model, wid: WindowId, fx: &mut Vec<Effect>) -> Reply {
+    let Some(w) = m.windows.get(&wid) else {
+        return Reply::err(format!("no window {wid}"));
+    };
+    let (pid, ws, minimized) = (w.pid, w.workspace.clone(), w.minimized);
+    if m.ws(&ws).is_none() {
+        return Reply::err(format!("window {wid} has no workspace"));
+    }
+    if !m.is_visible(&ws) {
+        show_workspace(m, &ws, fx, false);
+    }
+    if let Some(x) = m.ws_mut(&ws) {
+        if x.fullscreen.is_some_and(|f| f != wid) {
+            x.fullscreen = None;
+            m.layout_dirty = true;
+        }
+    }
+    if minimized {
+        fx.push(Effect::Restore { pid, wid });
+    } else {
+        fx.push(Effect::Focus { pid, wid });
+    }
+    set_focus(m, wid, fx);
+    Reply::ok()
 }
 
 fn cycle_display(m: &Model, which: Cycle) -> Option<String> {

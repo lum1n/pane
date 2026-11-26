@@ -107,6 +107,21 @@ pub enum Command {
         suspended: bool,
     },
     Ping,
+    /// Focus a window wherever it is: show its workspace (on its display)
+    /// first, and restore it if minimized.
+    FocusWindow {
+        wid: u32,
+    },
+    /// Open the window and command palette.
+    Palette,
+    /// Rank windows, workspaces, profiles and commands against `query`
+    /// (`palette::search`). The runtime fills in `profiles`.
+    Search {
+        #[serde(default)]
+        query: String,
+        #[serde(default)]
+        profiles: Vec<String>,
+    },
     /// Input from the gesture tracker (hold the modifier and point). Not in
     /// the text form; send JSON to test it.
     Gesture {
@@ -188,6 +203,16 @@ impl Command {
             "reload" => Command::Reload,
             "profile-picker" => Command::ProfilePicker,
             "open-editor" => Command::OpenEditor,
+            "palette" => Command::Palette,
+            "focus-window" => Command::FocusWindow {
+                wid: arg(1)?
+                    .parse()
+                    .map_err(|_| format!("`{s}`: bad window id"))?,
+            },
+            "search" => Command::Search {
+                query: parts[1..].join(" "),
+                profiles: vec![],
+            },
             "recover" => Command::Recover {
                 all_apps: parts.get(1) == Some(&"--all-apps"),
             },
@@ -208,6 +233,7 @@ impl Command {
                 | Command::Ping
                 | Command::ProfileList
                 | Command::ProfileLoad { .. }
+                | Command::Search { .. }
         )
     }
 }
@@ -267,6 +293,8 @@ pub enum UiRequest {
     },
     OpenEditor,
     ProfilePicker,
+    /// Show the window and command palette (toggle if already open).
+    Palette,
     AxPermissionMissing,
     /// Show where a window moved by a gesture will go: `frame` is the frame
     /// it will get, `target` the tile being split (if any). Global
@@ -322,6 +350,18 @@ mod tests {
                 what: QueryKind::Windows
             }
         );
+        assert_eq!(
+            Command::parse("focus-window 42").unwrap(),
+            Command::FocusWindow { wid: 42 }
+        );
+        assert_eq!(
+            Command::parse("search web  dev").unwrap(),
+            Command::Search {
+                query: "web dev".into(),
+                profiles: vec![]
+            }
+        );
+        assert!(Command::parse("focus-window x").is_err());
         assert_eq!(
             serde_json::to_string(&Reply::ok()).unwrap(),
             r#"{"status":"ok"}"#
