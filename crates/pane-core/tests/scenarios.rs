@@ -969,6 +969,7 @@ fn profile_stays_until_another_is_applied() {
     let p = pane_core::profile::Profile {
         name: "work".into(),
         version: 1,
+        when: None,
         displays: vec![
             pane_core::profile::ProfileDisplay {
                 display: "center".into(),

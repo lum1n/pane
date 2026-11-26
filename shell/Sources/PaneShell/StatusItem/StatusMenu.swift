@@ -52,13 +52,20 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
             let profiles = NSMenuItem(title: s.active_profile.map { "Profile: \($0)" } ?? "Profiles", action: nil, keyEquivalent: "")
             let sub = NSMenu()
+            let desk = s.desk_profiles ?? []
             for p in s.profiles {
-                let i = item(p, #selector(applyProfile(_:)), obj: p)
+                let i = item(desk.contains(p) ? "\(p)  (these displays)" : p, #selector(applyProfile(_:)), obj: p)
                 i.state = s.active_profile == p ? .on : .off
                 i.toolTip = s.active_profile == p ? "Active: re-apply to reset the layout to this profile" : "Apply"
                 sub.addItem(i)
             }
             if !s.profiles.isEmpty { sub.addItem(.separator()) }
+            if let a = s.active_profile, s.profiles.contains(a) {
+                let i = item("Apply “\(a)” on These Displays Automatically", #selector(toggleProfileAuto(_:)), obj: a)
+                i.state = desk.contains(a) ? .on : .off
+                i.toolTip = "Pane applies it by itself whenever exactly these displays are connected"
+                sub.addItem(i)
+            }
             sub.addItem(item("Save Current Desk as Profile…", #selector(saveProfile)))
             sub.addItem(item("Edit Profiles…", #selector(editProfiles)))
             profiles.submenu = sub
@@ -104,6 +111,15 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func applyProfile(_ sender: NSMenuItem) {
         guard let n = sender.representedObject as? String else { return }
         if case let .error(m) = PaneCore.shared.applyProfile(named: n) { NoticeHUD.shared.show(m) }
+    }
+
+    @objc private func toggleProfileAuto(_ sender: NSMenuItem) {
+        guard let n = sender.representedObject as? String else { return }
+        let on = sender.state != .on
+        switch PaneCore.shared.setProfileAuto(n, here: on) {
+        case let .error(m): NoticeHUD.shared.show(m)
+        case .ok: NoticeHUD.shared.show(on ? "“\(n)” applies on these displays" : "“\(n)” applies only by hand")
+        }
     }
 
     @objc private func saveProfile() {

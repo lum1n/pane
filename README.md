@@ -67,13 +67,15 @@ size = "60%x50%"
 
 The key shows the app's window as a centered float on the display you are working on (opening the app if it is not running, or taking its existing window), and again hides it, giving focus back to where you were. On another display it comes to that display. Cmd-Tab to the app also brings it back. `summon APP` (bind it in `[shortcuts]`, e.g. `"mod-shift-t" = "summon Terminal"`) brings an app's window to the workspace you are on, next to the focused tile, without switching workspace.
 
+Profiles can follow your displays. Apply a profile, then choose **Apply “NAME” on These Displays Automatically** in the menu's Profiles submenu (or run `pane profile auto NAME`). From then on, Pane applies that profile by itself whenever exactly those displays are connected. Plug in at the office and get the office layout; unplug and get the laptop one. It waits until the displays have settled for 5 seconds. A profile you pick by hand stays until the displays change. See [docs/config.md](docs/config.md#profiles-that-follow-the-displays).
+
 The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
 
 The `pane` CLI talks to the running app over a Unix socket:
 
 ```sh
 pane ws 3                 pane query windows|displays|workspaces|tree|snapshot
-pane do "focus left"      pane profile list|apply NAME|capture NAME|delete NAME
+pane do "focus left"      pane profile list|apply|capture|delete|auto|manual NAME
 pane reload               pane recover [--all-apps]
 pane search saf           pane do "focus-window 1234"
 pane do "scratchpad com.googlecode.iterm2"    pane do "summon Safari"

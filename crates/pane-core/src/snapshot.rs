@@ -19,6 +19,10 @@ pub struct Snapshot {
     /// Filled in by the runtime.
     #[serde(default)]
     pub profiles: Vec<String>,
+    /// Saved profiles whose `[when]` matches the connected displays. Filled
+    /// in by the runtime.
+    #[serde(default)]
+    pub desk_profiles: Vec<String>,
     #[serde(default)]
     pub ax_trusted: bool,
     /// How the shell draws the focus border and dimming.
@@ -191,6 +195,7 @@ pub fn build(m: &Model) -> Snapshot {
         config_error: m.config_error.as_ref().map(|e| e.render()),
         active_profile: m.active_profile.clone(),
         profiles: vec![],
+        desk_profiles: vec![],
         ax_trusted: true,
         appearance: SnapAppearance {
             border_width: m.config.settings.border_width,

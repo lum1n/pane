@@ -75,24 +75,17 @@ pub fn write_parked(path: &Path, entries: &[ParkedEntry]) -> std::io::Result<()>
     )
 }
 
-pub fn list_profiles(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir(dir)
+/// Every readable profile in `dir`, sorted by name.
+pub fn read_profiles(dir: &Path) -> Vec<Profile> {
+    let mut v: Vec<Profile> = fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "toml") {
-                fs::read_to_string(&p)
-                    .ok()
-                    .and_then(|t| Profile::from_toml(&t).ok())
-                    .map(|pr| pr.name)
-            } else {
-                None
-            }
-        })
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .filter_map(|p| read_profile(&p).ok())
         .collect();
-    v.sort();
+    v.sort_by(|a, b| a.name.cmp(&b.name));
     v
 }
 

@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::Config;
+use crate::display::Display;
 use crate::geometry::{Direction, Orientation};
 use crate::tree::{AppSlot, InsertAt, Leaf, NodeId, SerNode, Tree};
 
@@ -15,8 +17,87 @@ pub struct Profile {
     pub name: String,
     #[serde(default = "version_one")]
     pub version: u32,
+    /// When to apply this profile by itself (`[when]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<ProfileCondition>,
     #[serde(default, rename = "display")]
     pub displays: Vec<ProfileDisplay>,
+}
+
+/// The desk a profile is for: it applies by itself when the connected
+/// displays come to match.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProfileCondition {
+    /// Displays that must all be connected: `uuid:...`, `name:...` or a
+    /// `[[display]]` alias. Positions (`left`, `main`) match any display.
+    pub displays: Vec<String>,
+    /// No other display may be connected (the default). With `false`, more
+    /// displays are fine and the profile with the most matching ones wins.
+    #[serde(default = "yes", skip_serializing_if = "Clone::clone")]
+    pub exact: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl ProfileCondition {
+    /// A condition matching exactly these displays, by UUID.
+    pub fn for_displays(displays: &[Display]) -> ProfileCondition {
+        let mut ids: Vec<String> = displays.iter().map(|d| format!("uuid:{}", d.id)).collect();
+        ids.sort();
+        ProfileCondition {
+            displays: ids,
+            exact: true,
+        }
+    }
+
+    /// How well the connected (ranked) displays match: `None` if they don't,
+    /// else a score where higher is more specific.
+    pub fn score(&self, displays: &[Display], config: &Config) -> Option<usize> {
+        if self.displays.is_empty() {
+            return None;
+        }
+        let mut used: Vec<&str> = Vec::new();
+        for r in &self.displays {
+            let d = config.display_ref(r).resolve(displays)?;
+            if used.contains(&d.id.as_str()) {
+                return None;
+            }
+            used.push(&d.id);
+        }
+        if self.exact && used.len() != displays.len() {
+            return None;
+        }
+        // An exact match beats any partial one; then more displays wins.
+        Some(used.len() + if self.exact { 1000 } else { 0 })
+    }
+}
+
+/// Key identifying a set of connected displays (order does not matter).
+pub fn topology_key(displays: &[Display]) -> String {
+    let mut ids: Vec<&str> = displays.iter().map(|d| d.id.as_str()).collect();
+    ids.sort_unstable();
+    ids.join(",")
+}
+
+/// The profile meant for the connected displays: the best-scoring `[when]`
+/// match. The active profile wins a tie, then the first name alphabetically.
+pub fn pick_for_displays<'a>(
+    profiles: &'a [Profile],
+    displays: &[Display],
+    config: &Config,
+    active: Option<&str>,
+) -> Option<&'a Profile> {
+    profiles
+        .iter()
+        .filter_map(|p| Some((p.when.as_ref()?.score(displays, config)?, p)))
+        .max_by(|(sa, a), (sb, b)| {
+            sa.cmp(sb)
+                .then_with(|| (active == Some(&a.name)).cmp(&(active == Some(&b.name))))
+                .then_with(|| b.name.cmp(&a.name))
+        })
+        .map(|(_, p)| p)
 }
 
 fn version_one() -> u32 {
@@ -403,6 +484,7 @@ mod tests {
         Profile {
             name: "work".into(),
             version: 1,
+            when: None,
             displays: vec![ProfileDisplay {
                 display: "left".into(),
                 workspace: "1".into(),
@@ -562,5 +644,111 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    fn display(id: &str, name: &str, x: f64, main: bool) -> Display {
+        Display {
+            id: id.into(),
+            name: name.into(),
+            frame: crate::geometry::Rect::new(x, 0.0, 1000.0, 800.0),
+            visible_frame: crate::geometry::Rect::new(x, 0.0, 1000.0, 800.0),
+            is_main: main,
+            scale: 1.0,
+            position_rank: 0,
+        }
+    }
+
+    fn desk(ds: Vec<Display>) -> Vec<Display> {
+        let mut ds = ds;
+        crate::display::rank_displays(&mut ds);
+        ds
+    }
+
+    fn with_when(name: &str, displays: &[&str], exact: bool) -> Profile {
+        Profile {
+            name: name.into(),
+            when: Some(ProfileCondition {
+                displays: displays.iter().map(|s| s.to_string()).collect(),
+                exact,
+            }),
+            ..base()
+        }
+    }
+
+    #[test]
+    fn when_matches_displays() {
+        let cfg = Config::parse(
+            "[[display]]\nname = \"office-left\"\nuuid = \"AAAAAAAA-0000-0000-0000-000000000001\"\n",
+        )
+        .unwrap();
+        let a = "AAAAAAAA-0000-0000-0000-000000000001";
+        let b = "BBBBBBBB-0000-0000-0000-000000000002";
+        let laptop = display("LAPTOP", "Built-in Retina Display", 0.0, true);
+        let office = desk(vec![
+            display(a, "Dell U2720Q", -1000.0, false),
+            laptop.clone(),
+            display(b, "Dell U2720Q", 1000.0, false),
+        ]);
+        let alone = desk(vec![laptop.clone()]);
+
+        let train = with_when("train", &["name:built-in"], true);
+        let work = with_when(
+            "work",
+            &["office-left", &format!("uuid:{b}"), "uuid:laptop"],
+            true,
+        );
+        let any_dell = with_when("dell", &[&format!("uuid:{a}")], false);
+        let all = vec![any_dell.clone(), train.clone(), work.clone(), base()];
+
+        assert!(train.when.as_ref().unwrap().score(&alone, &cfg).is_some());
+        assert!(
+            train.when.as_ref().unwrap().score(&office, &cfg).is_none(),
+            "exact: other displays connected"
+        );
+        assert!(work.when.as_ref().unwrap().score(&alone, &cfg).is_none());
+        let pick = |ds: &[Display], active| {
+            pick_for_displays(&all, ds, &cfg, active).map(|p| p.name.as_str())
+        };
+        assert_eq!(pick(&office, None), Some("work"), "exact beats partial");
+        assert_eq!(pick(&alone, None), Some("train"));
+        assert_eq!(pick(&desk(vec![laptop.clone()])[..0], None), None);
+        // Only the partial match applies with one office monitor unplugged.
+        let half = desk(vec![display(a, "Dell", -1000.0, false), laptop.clone()]);
+        assert_eq!(pick(&half, None), Some("dell"));
+
+        // Two refs resolving to the same display never match.
+        let twice = with_when("twice", &["name:dell", "name:dell"], false);
+        assert!(twice.when.as_ref().unwrap().score(&office, &cfg).is_none());
+
+        // Ties: the active profile, then the first name.
+        let t1 = with_when("b-train", &["uuid:LAPTOP"], true);
+        let t2 = with_when("a-train", &["uuid:LAPTOP"], true);
+        let tied = vec![t1, t2];
+        assert_eq!(
+            pick_for_displays(&tied, &alone, &cfg, None).map(|p| p.name.as_str()),
+            Some("a-train")
+        );
+        assert_eq!(
+            pick_for_displays(&tied, &alone, &cfg, Some("b-train")).map(|p| p.name.as_str()),
+            Some("b-train")
+        );
+
+        // Written for the connected displays; round-trips through TOML.
+        let here = Profile {
+            when: Some(ProfileCondition::for_displays(&office)),
+            ..base()
+        };
+        assert_eq!(
+            pick_for_displays(std::slice::from_ref(&here), &office, &cfg, None),
+            Some(&here)
+        );
+        assert!(here.when.as_ref().unwrap().score(&half, &cfg).is_none());
+        let text = here.to_toml().unwrap();
+        assert!(text.contains("[when]") && !text.contains("exact"), "{text}");
+        assert_eq!(Profile::from_toml(&text).unwrap(), here);
+        assert_eq!(
+            topology_key(&office),
+            topology_key(&office.iter().rev().cloned().collect::<Vec<_>>())
+        );
     }
 }

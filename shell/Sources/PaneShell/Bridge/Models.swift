@@ -62,6 +62,8 @@ struct Snapshot: Codable, Equatable {
     /// Profile applied last; stays until another is applied.
     var active_profile: String?
     var profiles: [String]
+    /// Profiles whose `[when]` matches the connected displays.
+    var desk_profiles: [String]?
     var ax_trusted: Bool
     var appearance: SnapAppearance?
 }
@@ -157,9 +159,18 @@ struct ProfileDisplay: Codable, Equatable {
     var isVisible: Bool { visible ?? false }
 }
 
+/// `[when]`: the displays a profile applies itself on.
+struct ProfileCondition: Codable, Equatable {
+    var displays: [String]
+    /// No other display connected (omitted when true).
+    var exact: Bool?
+}
+
 struct Profile: Codable, Equatable {
     var name: String
     var version: Int = 1
+    /// Kept as is so saving from the editor does not drop it.
+    var when: ProfileCondition?
     var display: [ProfileDisplay]
 }
 

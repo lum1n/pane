@@ -50,6 +50,14 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] An app in the profile that is not running leaves no gap; when it opens, its window goes to its slot.
 - [ ] No window ever ends up parked in the corner of a display while its workspace is shown.
 
+## Profiles that follow the displays
+- [ ] Apply "office" with all displays connected and tick **Apply “office” on These Displays Automatically**: `profiles/office.toml` gets a `[when]` with every display's UUID; the menu marks "office (these displays)".
+- [ ] Unplug down to the laptop, apply "laptop" and tick the same item. Plug the monitors back in: about 5 s after the last display appears, "office" applies with a notice. Unplug: "laptop" applies.
+- [ ] Apply a third profile by hand on the office desk: it stays, also after `make stop` and reopening Pane.
+- [ ] Sleep and wake the Mac on the office desk (monitors wake late): no profile switch.
+- [ ] Quit Pane, change desk, start Pane: the matching profile applies at launch (instead of `startup_profile`).
+- [ ] Save the desk again under the same name, or edit the profile in the Profile Editor and save: the `[when]` stays.
+
 ## Palette
 - [ ] `mod-/` opens the palette centred on the focused display, above the focus border and dimming; typing works without Pane taking focus from the app you were in.
 - [ ] Escape, or clicking elsewhere, closes it and leaves focus where it was.
