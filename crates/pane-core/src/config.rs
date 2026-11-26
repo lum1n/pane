@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::display::{DisplayRef, Position};
+use crate::geometry::Orientation;
 use crate::proto::Command;
-use crate::rules::{Rule, RuleAction};
+use crate::rules::{Rule, RuleAction, TilePlacement, TilePosition};
 use crate::tree::ContainerLayout;
 
 pub const CONFIG_VERSION: u32 = 1;
@@ -170,6 +171,29 @@ pub struct RuleConfig {
     pub workspace: Option<String>,
     #[serde(default)]
     pub display: Option<String>,
+    /// Where the tile goes when a matching window is first tiled.
+    #[serde(default)]
+    pub position: Option<TilePosition>,
+    /// How the new tile splits the focused one (with `position = "next"`).
+    #[serde(default)]
+    pub orientation: Option<Orientation>,
+    /// Layout of the split the new tile lands in.
+    #[serde(default)]
+    pub layout: Option<ContainerLayout>,
+    /// Share of that split, between 0 and 1.
+    #[serde(default)]
+    pub weight: Option<f64>,
+}
+
+impl RuleConfig {
+    pub fn placement(&self) -> TilePlacement {
+        TilePlacement {
+            position: self.position,
+            orientation: self.orientation,
+            layout: self.layout,
+            weight: self.weight,
+        }
+    }
 }
 
 /// `[[scratchpad]]`: one window of `app`, toggled by `scratchpad NAME`.
@@ -774,6 +798,7 @@ impl Config {
                     r.workspace.clone(),
                     r.display.as_ref().map(|d| self.display_ref(d)),
                 )
+                .and_then(|rule| rule.with_placement(r.placement()))
                 .map_err(|e| ConfigError::plain(format!("rule #{}: {e}", i + 1)))
             })
             .chain(float_apps)
@@ -1015,6 +1040,14 @@ position = "right"
 # workspace = "3"           # workspace 3 of the display the window opens on
 # display = "right"          # ...or of this display
 
+# Where a matching window's tile goes when it is first tiled:
+# [[rule]]
+# app = "com.mitchellh.ghostty"
+# position = "right"         # next | left | right | top | bottom
+# weight = 0.3               # share of the split, 0-1
+# orientation = "vertical"   # with position = "next": stack under the focused tile
+# layout = "accordion"       # tiles | accordion: layout of the split it lands in
+
 [shortcuts]
 # "mod" means the modifier above.
 # "mod-h" = "focus left"
@@ -1046,6 +1079,19 @@ mod tests {
     #[test]
     fn bad_regex_and_chord_rejected() {
         assert!(Config::parse("[[rule]]\ntitle = \"(\"\n").is_err());
+        assert!(Config::parse("[[rule]]\napp = \"x\"\nweight = 2.0\n").is_err());
+        assert!(Config::parse("[[rule]]\napp = \"x\"\nposition = \"middle\"\n").is_err());
+        assert!(
+            Config::parse("[[rule]]\napp = \"x\"\nposition = \"top\"\norientation = \"h\"\n")
+                .is_err()
+        );
+        let c = Config::parse(
+            "[[rule]]\napp = \"x\"\nposition = \"down\"\nweight = 0.3\nlayout = \"accordion\"\n",
+        )
+        .unwrap();
+        let p = c.compiled_rules().unwrap()[0].placement;
+        assert_eq!(p.position, Some(TilePosition::Bottom));
+        assert_eq!(p.layout, Some(ContainerLayout::Accordion));
         assert!(Config::parse("[shortcuts]\n\"fn-x\" = \"reload\"\n").is_err());
         assert!(Config::parse("[shortcuts]\n\"alt-x\" = \"frobnicate\"\n").is_err());
     }

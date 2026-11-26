@@ -1909,3 +1909,94 @@ fn summon_brings_a_window_here() {
     });
     assert_eq!(s.launches, vec!["com.example.c".to_string()]);
 }
+
+fn with_rules(toml: &str) -> Sim {
+    Sim::with(Model::new(Config::parse(toml).unwrap(), 1_000_000))
+}
+
+#[test]
+fn rule_puts_terminals_in_a_narrow_right_column() {
+    let mut s =
+        with_rules("[[rule]]\napp = \"com.apple.Terminal\"\nposition = \"right\"\nweight = 0.25\n");
+    s.launch(100, "com.apple.TextEdit");
+    s.window(100, 1, "a", CENTER);
+    s.window(100, 2, "b", CENTER);
+    s.focus(100, 2);
+    // b is stacked under a, so the root is a column of two.
+    s.cmd(Command::ToggleOrientation);
+    assert_eq!(s.frame(1).w, 1908.0);
+    s.launch(200, "com.apple.Terminal");
+    s.window(200, 10, "term", CENTER);
+    let area = Rect::new(6.0, 36.0, 1908.0, 1038.0);
+    let t = s.frame(10);
+    assert!((t.max_x() - area.max_x()).abs() <= 1.0, "at the right edge");
+    assert_eq!(t.h, area.h, "full height");
+    let share = (t.w + 3.0) / (area.w + 6.0);
+    assert!(
+        (share - 0.25).abs() < 0.01,
+        "a quarter of the width: {share}"
+    );
+    // The other windows stay stacked to its left.
+    assert_eq!(s.frame(1).x, area.x);
+    assert!(s.frame(2).y > s.frame(1).y);
+    assert!(s.frame(1).max_x() < t.x);
+}
+
+#[test]
+fn rule_splits_the_focused_tile_and_sets_its_layout() {
+    let mut s = with_rules(
+        "[[rule]]\napp = \"com.apple.Terminal\"\norientation = \"vertical\"\nweight = 0.3\n\
+         [[rule]]\napp = \"org.mozilla.firefox\"\nlayout = \"accordion\"\n",
+    );
+    s.launch(100, "com.apple.TextEdit");
+    s.window(100, 1, "a", CENTER);
+    s.window(100, 2, "b", CENTER);
+    s.focus(100, 2);
+    s.launch(200, "com.apple.Terminal");
+    s.window(200, 10, "term", CENTER);
+    // Stacked under b, taking 30% of b's column.
+    assert_eq!(s.frame(10).x, s.frame(2).x);
+    assert_eq!(s.frame(10).w, s.frame(2).w);
+    assert!(s.frame(10).y > s.frame(2).y);
+    let share = s.frame(10).h / (s.frame(10).h + s.frame(2).h);
+    assert!((share - 0.3).abs() < 0.01, "{share}");
+    assert_eq!(s.frame(1).h, 1038.0, "a keeps its full height");
+
+    // A layout rule changes the split the window lands in.
+    let ws = s.m.windows[&WindowId(1)].workspace.clone();
+    s.focus(100, 1);
+    s.launch(300, "org.mozilla.firefox");
+    s.window(300, 20, "web", CENTER);
+    let n = s.m.window_node(WindowId(20)).unwrap();
+    let parent = s.m.tree.parent(n).unwrap();
+    assert_eq!(parent, s.m.ws(&ws).unwrap().root);
+    assert_eq!(
+        s.m.tree.container(parent).unwrap().layout,
+        pane_core::tree::ContainerLayout::Accordion
+    );
+}
+
+#[test]
+fn rule_layout_applies_only_the_first_time() {
+    let cfg = "[[rule]]\napp = \"com.apple.Terminal\"\nposition = \"left\"\nweight = 0.2\n";
+    let mut s = with_rules(cfg);
+    s.launch(100, "com.apple.TextEdit");
+    s.window(100, 1, "a", CENTER);
+    s.launch(200, "com.apple.Terminal");
+    s.window(200, 10, "term", CENTER);
+    assert_eq!(s.frame(10).x, 6.0);
+    assert!(s.frame(10).w < s.frame(1).w);
+    // The user moves it; a relaunch brings it back where the user left it.
+    s.focus(200, 10);
+    s.cmd(Command::Move {
+        dir: Direction::Right,
+    });
+    assert!(s.frame(10).x > s.frame(1).x);
+    s.ev(Event::AppTerminated { pid: 200 });
+    s.launch(201, "com.apple.Terminal");
+    s.window(201, 11, "term", CENTER);
+    assert!(
+        s.frame(11).x > s.frame(1).x,
+        "remembered, not the rule's edge"
+    );
+}

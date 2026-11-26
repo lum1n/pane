@@ -4,6 +4,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::display::DisplayRef;
+use crate::geometry::{Direction, Orientation};
+use crate::tree::ContainerLayout;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -24,6 +26,75 @@ pub enum WindowRole {
     Floating,
     Popover,
     Other,
+}
+
+/// Where a rule puts a window's tile when the window is first tiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TilePosition {
+    /// Next to the focused tile, like any new window.
+    Next,
+    /// A full-height column at the left edge of the workspace.
+    Left,
+    /// A full-height column at the right edge of the workspace.
+    Right,
+    /// A full-width row at the top of the workspace.
+    #[serde(alias = "up")]
+    Top,
+    /// A full-width row at the bottom of the workspace.
+    #[serde(alias = "down")]
+    Bottom,
+}
+
+impl TilePosition {
+    /// The workspace edge, or `None` for [`TilePosition::Next`].
+    pub fn edge(self) -> Option<Direction> {
+        match self {
+            TilePosition::Next => None,
+            TilePosition::Left => Some(Direction::Left),
+            TilePosition::Right => Some(Direction::Right),
+            TilePosition::Top => Some(Direction::Up),
+            TilePosition::Bottom => Some(Direction::Down),
+        }
+    }
+}
+
+/// The layout part of a rule: applied once, when a matching window is
+/// first tiled (not when it comes back to a remembered tile).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TilePlacement {
+    pub position: Option<TilePosition>,
+    /// How the new tile splits the focused one (only with `position` next).
+    pub orientation: Option<Orientation>,
+    /// Layout of the split the new tile lands in.
+    pub layout: Option<ContainerLayout>,
+    /// Share of that split, between 0 and 1.
+    pub weight: Option<f64>,
+}
+
+impl TilePlacement {
+    pub fn is_empty(&self) -> bool {
+        *self == TilePlacement::default()
+    }
+
+    pub fn check(&self) -> Result<(), String> {
+        if let Some(w) = self.weight {
+            if !(w > 0.0 && w < 1.0) {
+                return Err(format!(
+                    "weight must be between 0 and 1 (a share of the split), got {w}"
+                ));
+            }
+        }
+        if let (Some(p), Some(_)) = (self.position, self.orientation) {
+            if p.edge().is_some() {
+                return Err(
+                    "orientation only works with position = \"next\": an edge position sets it"
+                        .into(),
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// `*` and `?` glob, case-insensitive.
@@ -56,6 +127,7 @@ pub struct Rule {
     pub action: Option<RuleAction>,
     pub workspace: Option<String>,
     pub display: Option<DisplayRef>,
+    pub placement: TilePlacement,
 }
 
 impl Rule {
@@ -78,7 +150,14 @@ impl Rule {
             action,
             workspace,
             display,
+            placement: TilePlacement::default(),
         })
+    }
+
+    pub fn with_placement(mut self, placement: TilePlacement) -> Result<Rule, String> {
+        placement.check()?;
+        self.placement = placement;
+        Ok(self)
     }
 
     pub fn matches(&self, bundle_id: &str, title: &str) -> bool {
@@ -101,13 +180,16 @@ pub struct WindowTraits<'a> {
     pub regular_app: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Decision {
     pub action: RuleAction,
     /// True when the action came from a rule rather than auto-float/default.
     pub explicit: bool,
     pub workspace: Option<String>,
     pub display: Option<DisplayRef>,
+    /// Where a tile goes when the window is first tiled; each field from
+    /// the first matching rule that sets it.
+    pub placement: TilePlacement,
     /// Human-readable why, shown by `pane query windows`.
     pub reason: String,
 }
@@ -121,6 +203,12 @@ pub fn decide(rules: &[Rule], w: &WindowTraits, auto_float_below: f64) -> Decisi
         .collect();
     let workspace = matching.iter().find_map(|r| r.workspace.clone());
     let display = matching.iter().find_map(|r| r.display.clone());
+    let placement = TilePlacement {
+        position: matching.iter().find_map(|r| r.placement.position),
+        orientation: matching.iter().find_map(|r| r.placement.orientation),
+        layout: matching.iter().find_map(|r| r.placement.layout),
+        weight: matching.iter().find_map(|r| r.placement.weight),
+    };
     let explicit = if matching
         .iter()
         .any(|r| r.action == Some(RuleAction::Ignore))
@@ -143,6 +231,7 @@ pub fn decide(rules: &[Rule], w: &WindowTraits, auto_float_below: f64) -> Decisi
             explicit: true,
             workspace,
             display,
+            placement,
             reason,
         };
     }
@@ -152,6 +241,7 @@ pub fn decide(rules: &[Rule], w: &WindowTraits, auto_float_below: f64) -> Decisi
             explicit: false,
             workspace,
             display,
+            placement,
             reason: format!("auto-float: {why}"),
         },
         None => Decision {
@@ -159,6 +249,7 @@ pub fn decide(rules: &[Rule], w: &WindowTraits, auto_float_below: f64) -> Decisi
             explicit: false,
             workspace,
             display,
+            placement,
             reason: "standard window".into(),
         },
     }
@@ -274,5 +365,56 @@ mod tests {
         let mut w = std_window("com.example", "x");
         w.has_close_button = false;
         assert_eq!(decide(&[], &w, 120.0).action, RuleAction::Tile);
+    }
+
+    #[test]
+    fn placement_comes_from_the_first_rule_that_sets_each_field() {
+        let rules = vec![
+            Rule::new(Some("com.apple.Terminal"), Some("^ssh"), None, None, None)
+                .unwrap()
+                .with_placement(TilePlacement {
+                    weight: Some(0.5),
+                    ..Default::default()
+                })
+                .unwrap(),
+            Rule::new(Some("com.apple.Terminal"), None, None, None, None)
+                .unwrap()
+                .with_placement(TilePlacement {
+                    position: Some(TilePosition::Right),
+                    weight: Some(0.3),
+                    ..Default::default()
+                })
+                .unwrap(),
+        ];
+        let d = decide(&rules, &std_window("com.apple.Terminal", "ssh box"), 120.0);
+        assert_eq!(d.placement.position, Some(TilePosition::Right));
+        assert_eq!(d.placement.weight, Some(0.5));
+        let d = decide(&rules, &std_window("com.apple.Terminal", "zsh"), 120.0);
+        assert_eq!(d.placement.weight, Some(0.3));
+        assert!(decide(&rules, &std_window("other", "x"), 120.0)
+            .placement
+            .is_empty());
+    }
+
+    #[test]
+    fn placement_check() {
+        let bad_weight = TilePlacement {
+            weight: Some(1.0),
+            ..Default::default()
+        };
+        assert!(bad_weight.check().is_err());
+        let edge_and_orientation = TilePlacement {
+            position: Some(TilePosition::Left),
+            orientation: Some(Orientation::Vertical),
+            ..Default::default()
+        };
+        assert!(edge_and_orientation.check().is_err());
+        let next_and_orientation = TilePlacement {
+            position: Some(TilePosition::Next),
+            orientation: Some(Orientation::Vertical),
+            weight: Some(0.4),
+            layout: Some(ContainerLayout::Accordion),
+        };
+        assert!(next_and_orientation.check().is_ok());
     }
 }

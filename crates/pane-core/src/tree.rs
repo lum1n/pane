@@ -315,8 +315,10 @@ impl Tree {
         let fwd = dir.is_forward();
         // Dropping on an empty root, or on a container itself.
         if let Some(c) = self.container(target) {
-            if c.children.is_empty() || c.orientation == axis {
-                if c.children.is_empty() {
+            // A lone child fills the container either way: turn it
+            // rather than wrap the child in a container of its own.
+            if c.children.len() < 2 || c.orientation == axis {
+                if c.children.len() < 2 {
                     self.container_mut(target).unwrap().orientation = axis;
                 }
                 let idx = if fwd { self.children(target).len() } else { 0 };

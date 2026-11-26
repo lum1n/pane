@@ -21,8 +21,8 @@ use crate::model::{
 use crate::profile::{title_matches, Profile, ProfileDisplay};
 use crate::proto::{Command, QueryKind, Reply, UiRequest};
 use crate::reconcile;
-use crate::rules::{decide, Decision, RuleAction, WindowTraits};
-use crate::tree::{InsertAt, Leaf, MoveResult, NodeId, SerNode};
+use crate::rules::{decide, Decision, RuleAction, TilePlacement, WindowTraits};
+use crate::tree::{InsertAt, Leaf, MoveResult, NodeId, SerNode, Tree};
 use crate::workspace::{split_id, valid_name, ws_id, Cycle};
 use crate::{Pid, WindowId, WorkspaceId};
 
@@ -634,6 +634,7 @@ fn discover(
             }
         }
         // 4. Rules / defaults.
+        let mut placement = TilePlacement::default();
         let (ws, plan) = match target {
             Some(t) => t,
             None => {
@@ -670,7 +671,8 @@ fn discover(
                 let plan = if d.action == RuleAction::Float {
                     Plan::Float(sane_frame(m, &ws))
                 } else {
-                    Plan::Tile(default_insert(m, &ws), None)
+                    placement = d.placement;
+                    Plan::Tile(rule_insert(m, &ws, &placement), None)
                 };
                 (ws, plan)
             }
@@ -711,6 +713,7 @@ fn discover(
                 if let Some(w) = weight {
                     m.tree.set_weight(n, w);
                 }
+                apply_placement(&mut m.tree, n, &placement);
             }
             Plan::Replace(node) => {
                 if let Some(Leaf::Window(old)) = m.tree.leaf(node).cloned() {
@@ -805,6 +808,55 @@ fn default_insert(m: &Model, ws: &str) -> InsertAt {
             InsertAt::After(n)
         }
         _ => InsertAt::End,
+    }
+}
+
+/// Where a new tile goes under a rule's `position` and `orientation`:
+/// an edge of the workspace, a split of the focused tile, or (without
+/// either) where new windows usually go.
+fn rule_insert(m: &Model, ws: &str, p: &TilePlacement) -> InsertAt {
+    let Some(w) = m.ws(ws) else {
+        return InsertAt::End;
+    };
+    if let Some(dir) = p.position.and_then(|pos| pos.edge()) {
+        return InsertAt::Split {
+            target: w.root,
+            dir,
+        };
+    }
+    let Some(o) = p.orientation else {
+        return default_insert(m, ws);
+    };
+    let target = match default_insert(m, ws) {
+        InsertAt::After(n) => n,
+        _ => w.root,
+    };
+    let dir = match o {
+        Orientation::Horizontal => Direction::Right,
+        Orientation::Vertical => Direction::Down,
+    };
+    InsertAt::Split { target, dir }
+}
+
+/// A rule's `layout` and `weight` for the tile `n` just inserted: the
+/// layout of its split, and its share of that split.
+fn apply_placement(tree: &mut Tree, n: NodeId, p: &TilePlacement) {
+    let Some(parent) = tree.parent(n) else { return };
+    if let Some(layout) = p.layout {
+        if let Some(c) = tree.container_mut(parent) {
+            c.layout = layout;
+        }
+    }
+    if let Some(share) = p.weight {
+        let others: f64 = tree
+            .children(parent)
+            .iter()
+            .filter(|c| **c != n)
+            .map(|c| tree.weight_of(*c))
+            .sum();
+        if others > 0.0 {
+            tree.set_weight(n, others * share / (1.0 - share));
+        }
     }
 }
 
