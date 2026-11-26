@@ -1570,7 +1570,8 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         Command::ProfileSave { .. }
         | Command::ProfileLoad { .. }
         | Command::ProfileDelete { .. }
-        | Command::ProfileList => Reply::err("profile storage is handled by the runtime"),
+        | Command::ProfileList
+        | Command::ProfileWhen { .. } => Reply::err("profile storage is handled by the runtime"),
         Command::Ping => Reply::data(&"pong"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
         Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
@@ -2324,6 +2325,7 @@ pub fn capture(m: &Model, name: &str) -> Profile {
     Profile {
         name: name.into(),
         version: crate::profile::PROFILE_VERSION,
+        when: None,
         displays,
     }
 }

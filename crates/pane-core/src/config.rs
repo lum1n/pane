@@ -49,6 +49,9 @@ pub struct Settings {
     /// No effect: workspaces always return to their own display.
     pub return_workspaces_on_reconnect: bool,
     pub startup_profile: Option<String>,
+    /// Apply a profile by itself when the connected displays come to match
+    /// its `[when]` block.
+    pub auto_profiles: bool,
     /// Apps that need the size/position/size double set.
     pub electron_bundle_ids: Vec<String>,
     /// Resize step as a fraction of the container (0.05 = 5%).
@@ -89,6 +92,7 @@ impl Default for Settings {
             restore_placements: true,
             return_workspaces_on_reconnect: true,
             startup_profile: None,
+            auto_profiles: true,
             electron_bundle_ids: vec![
                 "com.microsoft.VSCode".into(),
                 "com.tinyspeck.slackmacgap".into(),
@@ -951,6 +955,9 @@ placement_memory_days = 30
 restore_placements = true
 return_workspaces_on_reconnect = true
 # startup_profile = "work"
+# Apply a profile by itself when the displays match its [when] block
+# (`pane profile-when here NAME` writes one for the current displays).
+auto_profiles = true
 
 # The key(s) behind every default hotkey: "alt", "ctrl-alt", "cmd-ctrl",
 # "hyper" (cmd-ctrl-alt-shift), "meh" (ctrl-alt-shift), ...

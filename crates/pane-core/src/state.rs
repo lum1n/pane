@@ -43,6 +43,9 @@ pub struct State {
     /// Scratchpad name -> its window.
     #[serde(default)]
     pub scratchpads: BTreeMap<String, WindowId>,
+    /// Display set automatic profile choice last acted on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_topology: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

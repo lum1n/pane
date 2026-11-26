@@ -112,6 +112,10 @@ final class PaneCore {
     func reload() -> Reply { send(["cmd": "reload"]) }
     func recover() { send(["cmd": "recover", "all_apps": false]) }
     func applyProfile(named name: String) -> Reply { send(["cmd": "profile-apply", "name": name]) }
+    /// Apply profile `name` by itself on the displays connected now (or never).
+    func setProfileAuto(_ name: String, here: Bool) -> Reply {
+        send(["cmd": "profile-when", "name": name, "here": here])
+    }
 
     func capture(name: String) -> Result<Profile, PaneError> {
         request(["cmd": "profile-capture", "name": name], as: Profile.self)

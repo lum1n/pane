@@ -83,6 +83,13 @@ pub enum Command {
         name: String,
     },
     ProfileList,
+    /// Make profile `name` apply by itself on the displays connected now
+    /// (`here: true`), or never by itself (`here: false`). Handled by the
+    /// runtime, which edits the profile's `[when]`.
+    ProfileWhen {
+        name: String,
+        here: bool,
+    },
     /// Apply an editor operation to a profile and return the result.
     ProfileEdit {
         profile: Profile,
@@ -240,6 +247,18 @@ impl Command {
                 name: Some(arg(1)?.to_string()),
                 profile: None,
             },
+            "profile-when" => {
+                let here = match arg(1)? {
+                    "here" => true,
+                    "off" => false,
+                    _ => return Err(format!("`{s}`: use `profile-when here|off NAME`")),
+                };
+                arg(2)?;
+                Command::ProfileWhen {
+                    name: parts[2..].join(" "),
+                    here,
+                }
+            }
             other => return Err(format!("unknown command `{other}`")),
         };
         Ok(cmd)
@@ -395,6 +414,22 @@ mod tests {
             }
         );
         assert!(Command::parse("summon").is_err());
+        assert_eq!(
+            Command::parse("profile-when here Home office").unwrap(),
+            Command::ProfileWhen {
+                name: "Home office".into(),
+                here: true
+            }
+        );
+        assert_eq!(
+            Command::parse("profile-when off work").unwrap(),
+            Command::ProfileWhen {
+                name: "work".into(),
+                here: false
+            }
+        );
+        assert!(Command::parse("profile-when here").is_err());
+        assert!(Command::parse("profile-when always work").is_err());
         assert_eq!(
             serde_json::to_string(&Reply::ok()).unwrap(),
             r#"{"status":"ok"}"#

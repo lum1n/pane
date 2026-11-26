@@ -164,6 +164,10 @@ pub struct Model {
     pub ghosts: BTreeMap<WindowId, u64>,
     /// Name of the profile applied last; stays until the user applies another.
     pub active_profile: Option<String>,
+    /// Display set (`profile::topology_key`) that automatic profile choice
+    /// last acted on (persisted). A desk change away from it picks again;
+    /// on the same desk, a profile the user chose stays.
+    pub auto_topology: Option<String>,
     /// Floating windows from `state.json` waiting to be rediscovered.
     pub expected_floating: BTreeMap<WindowId, (WorkspaceId, Option<Rect>)>,
     pub now_ms: u64,
@@ -217,6 +221,7 @@ impl Model {
             ghosts: BTreeMap::new(),
             expected_floating: BTreeMap::new(),
             active_profile: None,
+            auto_topology: None,
             now_ms,
             gen: 0,
             seq: 0,
@@ -305,6 +310,7 @@ impl Model {
         m.display_frames = state.display_frames.clone();
         m.display_names = state.display_names.clone();
         m.active_profile = state.active_profile.clone();
+        m.auto_topology = state.auto_topology.clone();
         m.scratch = state.scratchpads.clone();
         m
     }
@@ -347,6 +353,7 @@ impl Model {
                 .filter_map(|w| w.slot.clone().map(|s| (w.id, s)))
                 .collect(),
             scratchpads: self.scratch.clone(),
+            auto_topology: self.auto_topology.clone(),
         }
     }
 

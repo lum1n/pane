@@ -13,6 +13,7 @@ use pane_core::display::Display;
 use pane_core::effect::Effect;
 use pane_core::event::Event;
 use pane_core::model::Model;
+use pane_core::profile::ProfileCondition;
 use pane_core::proto::{Command, QueryKind, Reply, UiRequest};
 use pane_core::reconcile::reconcile;
 use pane_core::reducer::{reduce, refresh_placements};
@@ -37,6 +38,9 @@ pub struct Options {
     pub control_socket: bool,
     /// How often to look for launched/terminated apps.
     pub app_poll: Duration,
+    /// How long the displays must stay unchanged before a profile is chosen
+    /// for them (`[when]`), so a flickering monitor does not flap profiles.
+    pub auto_profile_settle: Duration,
 }
 
 impl Options {
@@ -48,6 +52,7 @@ impl Options {
             hotkeys: true,
             control_socket: true,
             app_poll: Duration::from_secs(1),
+            auto_profile_settle: Duration::from_secs(5),
         }
     }
 }
@@ -242,7 +247,11 @@ pub fn start(platform: Arc<dyn Platform>, opts: Options) -> Result<Handle, Strin
         displays_due: None,
         first_displays: true,
         initial: None,
-        profiles: persist::list_profiles(&paths.profiles()),
+        scanned_early: HashSet::new(),
+        profiles: vec![],
+        profile_whens: vec![],
+        auto_due: None,
+        auto_settle_ms: opts.auto_profile_settle.as_millis() as u64,
         trusted: false,
         last_reconcile: 0,
         reconcile_due: true,
@@ -347,7 +356,14 @@ struct Core {
     first_displays: bool,
     /// Apps whose first enumeration we wait for before `InitialScanDone`.
     initial: Option<(HashSet<Pid>, u64)>,
+    /// Apps whose first enumeration came before the app list did.
+    scanned_early: HashSet<Pid>,
     profiles: Vec<String>,
+    /// Each saved profile's `[when]`, for the snapshot and the menu.
+    profile_whens: Vec<(String, ProfileCondition)>,
+    /// When to choose a profile for the displays (after they settle).
+    auto_due: Option<u64>,
+    auto_settle_ms: u64,
     trusted: bool,
     last_reconcile: u64,
     reconcile_due: bool,
@@ -357,6 +373,7 @@ struct Core {
 
 impl Core {
     fn run(&mut self, rx: Receiver<Msg>, ev_rx: Receiver<Event>) {
+        self.refresh_profiles();
         loop {
             let now = now_ms();
             let wake = self.next_wake(now);
@@ -409,6 +426,9 @@ impl Core {
         if let Some((_, d)) = &self.initial {
             at(*d);
         }
+        if let Some(d) = self.auto_due {
+            at(d);
+        }
         if self.reconcile_due {
             at(self.last_reconcile + RECONCILE_SPACING_MS);
         }
@@ -437,14 +457,20 @@ impl Core {
     }
 
     fn on_event(&mut self, e: Event) {
-        if let (
-            Event::WindowsDiscovered {
-                pid, initial: true, ..
-            },
-            Some((set, _)),
-        ) = (&e, &mut self.initial)
+        if let Event::WindowsDiscovered {
+            pid, initial: true, ..
+        } = &e
         {
-            set.remove(pid);
+            match &mut self.initial {
+                Some((set, _)) => {
+                    set.remove(pid);
+                }
+                // Before the app list arrives: don't wait for it again.
+                None if !self.m.initial_scan_done => {
+                    self.scanned_early.insert(*pid);
+                }
+                None => {}
+            }
         }
         self.reduce(e);
     }
@@ -462,9 +488,10 @@ impl Core {
                 }
             }
             Msg::InitialApps(pids) => {
+                let early = std::mem::take(&mut self.scanned_early);
                 let set: HashSet<Pid> = pids
                     .into_iter()
-                    .filter(|p| self.workers.contains_key(p))
+                    .filter(|p| self.workers.contains_key(p) && !early.contains(p))
                     .collect();
                 self.initial = Some((set, now_ms() + INITIAL_SCAN_MS));
             }
@@ -515,16 +542,26 @@ impl Core {
             let (_, displays) = self.displays_due.take().unwrap();
             tracing::info!(count = displays.len(), "displays changed");
             self.reduce(Event::DisplaysChanged { displays });
+            // Before the first scan the scan's end chooses instead.
+            if self.m.initial_scan_done {
+                self.auto_due = Some(now + self.auto_settle_ms);
+            }
+        }
+        if self.auto_due.is_some_and(|d| d <= now) {
+            self.auto_due = None;
+            self.auto_profile();
         }
         if let Some((set, deadline)) = &self.initial {
             if set.is_empty() || *deadline <= now {
                 self.initial = None;
                 self.reduce(Event::InitialScanDone);
-                // The default profile applies only when none is active: an
+                // A profile meant for these displays comes first. The
+                // default profile applies only when none is active: an
                 // active profile (kept in state.json) stays until the user
                 // applies another one.
+                let auto = self.auto_profile();
                 let startup = self.m.config.settings.startup_profile.clone();
-                if let Some(name) = startup.filter(|_| self.m.active_profile.is_none()) {
+                if let Some(name) = startup.filter(|_| !auto && self.m.active_profile.is_none()) {
                     self.command(
                         Command::ProfileApply {
                             name: Some(name),
@@ -687,6 +724,12 @@ impl Core {
     fn snapshot(&self) -> Snapshot {
         let mut s = pane_core::snapshot::build(&self.m);
         s.profiles = self.profiles.clone();
+        s.desk_profiles = self
+            .profile_whens
+            .iter()
+            .filter(|(_, c)| c.score(&self.m.displays, &self.m.config).is_some())
+            .map(|(n, _)| n.clone())
+            .collect();
         s.ax_trusted = self.trusted;
         s
     }
@@ -784,6 +827,16 @@ impl Core {
         let local = match cmd {
             Command::Reload => Some(self.load_config()),
             Command::ProfileList => Some(Reply::data(&self.profiles)),
+            Command::ProfileWhen { ref name, here } => Some(self.profile_when(name, here)),
+            // Re-capturing a saved profile keeps its `[when]`.
+            Command::ProfileCapture { ref name } => {
+                let name = name.as_deref().unwrap_or("Captured");
+                let mut p = pane_core::reducer::capture(&self.m, name);
+                p.when = persist::read_profile(&self.paths.profile(name))
+                    .ok()
+                    .and_then(|old| old.when);
+                Some(Reply::data(&p))
+            }
             Command::ProfileLoad { ref name } => {
                 Some(match persist::read_profile(&self.paths.profile(name)) {
                     Ok(p) => Reply::data(&p),
@@ -795,8 +848,7 @@ impl Core {
                 startup,
             } => {
                 let r = persist::write_profile(&self.paths.profile(&profile.name), profile);
-                self.profiles = persist::list_profiles(&self.paths.profiles());
-                self.snapshot_due = Some(now_ms());
+                self.refresh_profiles();
                 Some(match r {
                     Ok(()) if startup => {
                         let text = std::fs::read_to_string(self.paths.config()).unwrap_or_default();
@@ -812,8 +864,7 @@ impl Core {
             }
             Command::ProfileDelete { ref name } => {
                 let r = std::fs::remove_file(self.paths.profile(name));
-                self.profiles = persist::list_profiles(&self.paths.profiles());
-                self.snapshot_due = Some(now_ms());
+                self.refresh_profiles();
                 Some(
                     r.map(|_| Reply::ok())
                         .unwrap_or_else(|e| Reply::err(e.to_string())),
@@ -875,6 +926,86 @@ impl Core {
                 }
             },
             None => self.forward(cmd, reply),
+        }
+    }
+
+    /// Re-read the saved profiles' names and `[when]` blocks.
+    fn refresh_profiles(&mut self) {
+        let all = persist::read_profiles(&self.paths.profiles());
+        self.profiles = all.iter().map(|p| p.name.clone()).collect();
+        self.profile_whens = all
+            .into_iter()
+            .filter_map(|p| Some((p.name, p.when?)))
+            .collect();
+        self.snapshot_due = Some(now_ms());
+    }
+
+    /// Choose the profile meant for the connected displays, once per desk:
+    /// only when the display set differs from the one last acted on, so a
+    /// profile the user picked by hand stays until the desk changes (also
+    /// across restarts). Returns whether a profile is being applied.
+    fn auto_profile(&mut self) -> bool {
+        if !self.m.config.settings.auto_profiles || self.m.displays.is_empty() {
+            return false;
+        }
+        let key = pane_core::profile::topology_key(&self.m.displays);
+        if self.m.auto_topology.as_deref() == Some(key.as_str()) {
+            return false;
+        }
+        self.m.auto_topology = Some(key);
+        self.persist_due
+            .get_or_insert(now_ms() + PERSIST_DEBOUNCE_MS);
+        if self.profile_whens.is_empty() {
+            return false;
+        }
+        let all = persist::read_profiles(&self.paths.profiles());
+        let Some(p) = pane_core::profile::pick_for_displays(
+            &all,
+            &self.m.displays,
+            &self.m.config,
+            self.m.active_profile.as_deref(),
+        ) else {
+            tracing::info!("displays changed; no profile is meant for them");
+            return false;
+        };
+        if self.m.active_profile.as_deref() == Some(p.name.as_str()) {
+            return false;
+        }
+        tracing::info!(profile = %p.name, "displays changed; applying their profile");
+        self.request(UiRequest::info(format!("Applied profile “{}”", p.name)));
+        self.command(
+            Command::ProfileApply {
+                name: None,
+                profile: Some(p.clone()),
+            },
+            None,
+        );
+        true
+    }
+
+    fn profile_when(&mut self, name: &str, here: bool) -> Reply {
+        let path = self.paths.profile(name);
+        let mut p = match persist::read_profile(&path) {
+            Ok(p) => p,
+            Err(_) => return Reply::err(format!("no profile named `{name}`")),
+        };
+        if here {
+            if self.m.displays.is_empty() {
+                return Reply::err("no displays connected");
+            }
+            p.when = Some(ProfileCondition::for_displays(&self.m.displays));
+            // This desk now has its profile; don't choose again until it changes.
+            self.m.auto_topology = Some(pane_core::profile::topology_key(&self.m.displays));
+            self.persist_due
+                .get_or_insert(now_ms() + PERSIST_DEBOUNCE_MS);
+        } else {
+            p.when = None;
+        }
+        let r = persist::write_profile(&path, &p);
+        self.refresh_profiles();
+        match r {
+            Ok(()) => Reply::data(&p.when),
+            Err(e) => Reply::err(e),
         }
     }
 

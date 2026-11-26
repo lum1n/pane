@@ -42,6 +42,28 @@ impl AppWorker for FakeWorker {
 
 struct Fake {
     frames: Frames,
+    desk: Arc<Mutex<Vec<Display>>>,
+}
+
+impl Fake {
+    fn new(frames: Frames) -> Fake {
+        Fake {
+            frames,
+            desk: Arc::new(Mutex::new(vec![screen("C", 0.0, true)])),
+        }
+    }
+}
+
+fn screen(id: &str, x: f64, main: bool) -> Display {
+    Display {
+        id: id.into(),
+        name: format!("Fake {id}"),
+        frame: Rect::new(x, 0.0, 1000.0, 800.0),
+        visible_frame: Rect::new(x, 0.0, 1000.0, 800.0),
+        is_main: main,
+        scale: 1.0,
+        position_rank: 0,
+    }
 }
 
 impl Platform for Fake {
@@ -76,15 +98,7 @@ impl Platform for Fake {
         }))
     }
     fn displays(&self) -> Vec<Display> {
-        vec![Display {
-            id: "C".into(),
-            name: "Fake".into(),
-            frame: Rect::new(0.0, 0.0, 1000.0, 800.0),
-            visible_frame: Rect::new(0.0, 0.0, 1000.0, 800.0),
-            is_main: true,
-            scale: 1.0,
-            position_rank: 0,
-        }]
+        self.desk.lock().unwrap().clone()
     }
     fn running_apps(&self) -> Vec<RunningApp> {
         vec![RunningApp {
@@ -134,9 +148,7 @@ fn wait_until(mut f: impl FnMut() -> bool) {
 fn runtime_tiles_parks_persists_and_restores() {
     let dir = temp_dir("main");
     let frames: Frames = Arc::default();
-    let platform = Arc::new(Fake {
-        frames: frames.clone(),
-    });
+    let platform = Arc::new(Fake::new(frames.clone()));
     let mut opts = Options::new(Paths::new(&dir));
     opts.hotkeys = false;
     opts.app_poll = Duration::from_millis(50);
@@ -335,14 +347,138 @@ fn stale_lock_triggers_restore_and_busy_lock_refuses() {
     let mut opts = Options::new(Paths::new(&dir));
     opts.hotkeys = false;
     opts.control_socket = false;
-    let err = runtime::start(
-        Arc::new(Alive(Fake {
-            frames: Arc::default(),
-        })),
-        opts,
-    )
-    .err()
-    .unwrap();
+    let err = runtime::start(Arc::new(Alive(Fake::new(Arc::default()))), opts)
+        .err()
+        .unwrap();
     assert!(err.contains("already running"), "{err}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn profiles_follow_the_displays() {
+    let dir = temp_dir("auto");
+    let paths = Paths::new(&dir);
+    std::fs::create_dir_all(paths.profiles()).unwrap();
+    let profile = |name: &str, when: &[&str]| {
+        let text = format!(
+            "name = \"{name}\"\n[when]\ndisplays = [{}]\n[[display]]\ndisplay = \"uuid:C\"\nworkspace = \"1\"\ntree = {{ type = \"container\" }}\n",
+            when.iter()
+                .map(|w| format!("\"{w}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        std::fs::write(paths.profile(name), text).unwrap();
+    };
+    profile("solo", &["uuid:C"]);
+    profile("duo", &["uuid:C", "uuid:D"]);
+
+    let start = |fake: Fake| {
+        let mut opts = Options::new(paths.clone());
+        opts.hotkeys = false;
+        opts.control_socket = false;
+        opts.app_poll = Duration::from_millis(50);
+        // Longer than the 300 ms display debounce, so a dropout is seen.
+        opts.auto_profile_settle = Duration::from_millis(700);
+        runtime::start(Arc::new(fake), opts).unwrap()
+    };
+    let snap = |h: &runtime::Handle| {
+        let Reply::Ok { data } = h.command(
+            Command::Query {
+                what: QueryKind::Snapshot,
+            },
+            Duration::from_secs(2),
+        ) else {
+            panic!()
+        };
+        serde_json::from_value::<pane_core::snapshot::Snapshot>(data).unwrap()
+    };
+    let active = |h: &runtime::Handle| snap(h).active_profile;
+
+    let fake = Fake::new(Arc::default());
+    let desk = fake.desk.clone();
+    let h = start(fake);
+    // At startup: the profile for the one display.
+    wait_until(|| active(&h).as_deref() == Some("solo"));
+    assert_eq!(snap(&h).desk_profiles, vec!["solo"]);
+
+    // A second display arrives: its profile follows once things settle.
+    desk.lock().unwrap().push(screen("D", 1000.0, false));
+    h.screens_changed();
+    wait_until(|| active(&h).as_deref() == Some("duo"));
+
+    // A profile chosen by hand stays on the same desk, through display
+    // events that don't change the set.
+    let r = h.command(
+        Command::ProfileApply {
+            name: Some("solo".into()),
+            profile: None,
+        },
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
+    h.screens_changed();
+    std::thread::sleep(Duration::from_millis(1300));
+    assert_eq!(active(&h).as_deref(), Some("solo"));
+
+    // ...and across a restart on the same desk.
+    assert!(h.shutdown(Duration::from_secs(3)));
+    let fake = Fake::new(Arc::default());
+    *fake.desk.lock().unwrap() = desk.lock().unwrap().clone();
+    let desk = fake.desk.clone();
+    let h = start(fake);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(active(&h).as_deref(), Some("solo"));
+
+    // A display that drops out for less than the settle time changes
+    // nothing (without the settle, choosing for the lone display and then
+    // for the pair again would end on "duo").
+    desk.lock().unwrap().pop();
+    h.screens_changed();
+    std::thread::sleep(Duration::from_millis(450));
+    desk.lock().unwrap().push(screen("D", 1000.0, false));
+    h.screens_changed();
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(active(&h).as_deref(), Some("solo"));
+
+    // `profile-when off` stops a profile from following its displays;
+    // `here` binds it to the displays connected now.
+    let r = h.command(
+        Command::parse("profile-when off duo").unwrap(),
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
+    assert!(snap(&h).desk_profiles.is_empty());
+    desk.lock().unwrap().pop();
+    h.screens_changed();
+    wait_until(|| snap(&h).desk_profiles == vec!["solo"]);
+    let r = h.command(
+        Command::parse("profile-when here duo").unwrap(),
+        Duration::from_secs(2),
+    );
+    assert!(matches!(r, Reply::Ok { .. }), "{r:?}");
+    assert_eq!(snap(&h).desk_profiles, vec!["duo", "solo"]);
+    let saved = pane_agent::persist::read_profile(&paths.profile("duo")).unwrap();
+    assert_eq!(saved.when.unwrap().displays, vec!["uuid:C"]);
+    assert!(matches!(
+        h.command(
+            Command::parse("profile-when here nope").unwrap(),
+            Duration::from_secs(2)
+        ),
+        Reply::Error { .. }
+    ));
+
+    // Re-capturing a profile keeps its [when].
+    let Reply::Ok { data } = h.command(
+        Command::ProfileCapture {
+            name: Some("duo".into()),
+        },
+        Duration::from_secs(2),
+    ) else {
+        panic!()
+    };
+    let p: pane_core::profile::Profile = serde_json::from_value(data).unwrap();
+    assert_eq!(p.when.unwrap().displays, vec!["uuid:C"]);
+
+    assert!(h.shutdown(Duration::from_secs(3)));
     let _ = std::fs::remove_dir_all(dir);
 }

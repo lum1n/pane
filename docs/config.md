@@ -12,6 +12,7 @@ default_layout = "tiles"         # or "accordion"
 placement_memory_days = 30       # how long to remember where windows were
 restore_placements = true        # put relaunched windows back in their tiles
 startup_profile = "work"         # default profile: applied at launch when no profile is active
+auto_profiles = true             # apply a profile by itself when the displays match its [when]
 electron_bundle_ids = ["com.microsoft.VSCode"]   # use size/position/size when moving
 resize_step = 0.05
 auto_float_below = 120           # windows narrower or shorter than this float
@@ -105,6 +106,26 @@ These forms work in `[[workspace]].display`, `[[rule]].display` and profile file
 - `uuid:<UUID>`, or a bare UUID;
 - `name:<substring>`, or any other text, matched against the display name.
 
+## Profiles that follow the displays
+
+A profile with a `[when]` block applies by itself when the connected displays come to match it, such as three monitors at the office and the laptop alone on the train. **Apply “NAME” on These Displays Automatically** in the menu's Profiles submenu writes one for the active profile, and so does `pane profile auto NAME`. You can also write one in `profiles/NAME.toml` yourself:
+
+```toml
+name = "office"
+
+[when]
+displays = ["uuid:37D8832A-...", "uuid:5A1B...", "name:built-in"]
+exact = true                     # default: no other display connected; false = at least these
+```
+
+`displays` takes the display references above. Positions (`left`, `main`) match whatever is connected, so use UUIDs, names or `[[display]]` aliases. `pane query displays` lists the UUIDs.
+
+- Pane waits until the displays have not changed for 5 seconds, so a monitor that flickers or wakes slowly doesn't switch profiles back and forth.
+- It chooses once per desk. A profile you apply by hand stays until the set of connected displays changes, including across a restart on the same desk.
+- When several profiles match, an exact match beats one with `exact = false`, then the one naming more displays wins, then the active profile, then the first name.
+- A matching profile at launch takes the place of `startup_profile`.
+- `auto_profiles = false` turns it off.
+
 ## Shortcut commands
 
 Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are `a`-`z`, `0`-`9`, `return`, `tab`, `space`, `escape`, `comma`, `period`, `slash`, `semicolon`, `quote`, `leftbracket`, `rightbracket`, `minus`, `equal`, `backslash`, `grave`, the arrow keys (`left`, `right`, `up`, `down`) and `f1`-`f12`.
@@ -128,6 +149,7 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `scratchpad NAME` | show the `[[scratchpad]]` NAME on the focused display (opening the app, or taking its window, the first time); hide it if it is shown there and focused |
 | `summon APP` | bring a window of APP (bundle id or app name, any case) to the focused workspace, next to the focused tile, and focus it; opens APP if it has no window |
 | `profile-apply NAME` | |
+| `profile-when here\|off NAME` | `here`: apply NAME by itself whenever exactly the displays connected now are connected (writes its `[when]`); `off`: only by hand |
 | `recover`, `recover --all-apps` | |
 
 ## Files

@@ -37,7 +37,9 @@ enum Cmd {
     },
     /// Reload config.toml.
     Reload,
-    /// Profiles: list | apply NAME | capture NAME | delete NAME.
+    /// Profiles: list | apply NAME | capture NAME | show NAME | delete NAME |
+    /// auto NAME (apply by itself on the displays connected now) |
+    /// manual NAME (only when applied by hand).
     Profile {
         action: String,
         name: Option<String>,
@@ -118,6 +120,14 @@ fn build(c: &Cmd) -> Result<Command, String> {
                 },
                 "delete" => Command::ProfileDelete { name: need()? },
                 "show" => Command::ProfileLoad { name: need()? },
+                "auto" => Command::ProfileWhen {
+                    name: need()?,
+                    here: true,
+                },
+                "manual" => Command::ProfileWhen {
+                    name: need()?,
+                    here: false,
+                },
                 other => return Err(format!("unknown profile action `{other}`")),
             }
         }
