@@ -50,6 +50,9 @@ struct Sim {
     frozen: Vec<Pid>,
     /// Windows whose app answers but never moves them.
     stuck: Vec<WindowId>,
+    /// Like macOS: a window pushed below a display's bottom edge is nudged
+    /// back up so a 30pt strip stays visible.
+    clamp_offscreen: bool,
     notices: Vec<String>,
     launches: Vec<String>,
     sets: usize,
@@ -69,6 +72,7 @@ impl Sim {
             min: BTreeMap::new(),
             frozen: vec![],
             stuck: vec![],
+            clamp_offscreen: false,
             notices: vec![],
             launches: vec![],
             sets: 0,
@@ -103,11 +107,22 @@ impl Sim {
                             continue;
                         }
                         let min = self.min.get(wid).copied().unwrap_or(Size::ZERO);
-                        let actual = if self.stuck.contains(wid) {
+                        let mut actual = if self.stuck.contains(wid) {
                             self.frames[wid]
                         } else {
                             Rect::new(rect.x, rect.y, rect.w.max(min.w), rect.h.max(min.h))
                         };
+                        if self.clamp_offscreen {
+                            let bottom = self
+                                .m
+                                .displays
+                                .iter()
+                                .map(|d| d.frame.max_y())
+                                .fold(f64::MIN, f64::max);
+                            if actual.y > bottom - 30.0 {
+                                actual.y = bottom - 30.0;
+                            }
+                        }
                         self.frames.insert(*wid, actual);
                         follow.push(Event::FrameApplied {
                             pid: *pid,
@@ -978,4 +993,64 @@ fn repair_brings_back_windows_in_missing_workspaces() {
     s.tick(10);
     assert!(s.on_screen(1));
     assert_eq!(s.m.windows[&WindowId(1)].workspace, "C/1");
+}
+
+#[test]
+fn moved_window_stays_on_its_workspace() {
+    let mut s = Sim::new();
+    s.clamp_offscreen = true;
+    s.tick(2000);
+    s.launch(100, "com.google.Chrome");
+    s.launch(150, "com.apple.Terminal");
+    s.window(100, 1, "browser", CENTER);
+    s.window(150, 5, "term", CENTER);
+    s.focus(100, 1);
+    // mod-shift-2: move the browser to workspace 2.
+    s.cmd(Command::MoveToWorkspace { name: "2".into() });
+    s.now += 600;
+    s.cmd(Command::Workspace { name: "2".into() });
+    assert!(s.on_screen(1), "visible on w2 at first");
+    s.now += 600;
+    s.cmd(Command::Workspace { name: "1".into() });
+    // Time passes on w1 (park retries run their course).
+    for _ in 0..10 {
+        s.tick(1000);
+    }
+    // A new app opens on w1 and takes focus.
+    s.launch(200, "com.apple.Notes");
+    s.window(200, 2, "notes", CENTER);
+    s.focus(200, 2);
+    s.now += 600;
+    s.cmd(Command::Workspace { name: "2".into() });
+    assert_eq!(s.m.windows[&WindowId(1)].workspace, "C/2");
+    let f = s.frame(1);
+    assert!(
+        f.y < 100.0 && f.h > 900.0,
+        "browser tiled on w2, not in the corner: {f:?}"
+    );
+    assert!(!s.m.windows[&WindowId(1)].stubborn);
+}
+
+#[test]
+fn stubborn_windows_still_follow_their_workspace() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.stuck.push(WindowId(2));
+    s.window(100, 2, "two", Rect::new(5.0, 5.0, 300.0, 300.0));
+    for _ in 0..10 {
+        s.tick(3000);
+    }
+    assert!(s.m.windows[&WindowId(2)].stubborn);
+    // It moves again when hidden and shown (the app accepts those moves).
+    s.stuck.clear();
+    s.cmd(Command::Workspace { name: "2".into() });
+    assert!(!s.on_screen(2), "hidden with its workspace");
+    s.cmd(Command::Workspace { name: "1".into() });
+    assert!(
+        s.frame(2).x < 1900.0 && s.frame(2).y < 1000.0,
+        "back on screen: {:?}",
+        s.frame(2)
+    );
 }

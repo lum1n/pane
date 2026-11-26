@@ -951,6 +951,15 @@ fn frame_changed(m: &mut Model, wid: WindowId, frame: Rect, fx: &mut Vec<Effect>
         }
     }
     let visible = m.is_visible(&ws);
+    if !visible && reconcile::mostly_hidden(m, &frame) {
+        // A hidden window that macOS nudged (or the app moved) but that is
+        // still out of sight: leave it, re-parking would only loop.
+        if let Some(s) = m.last_sent.get_mut(&wid) {
+            s.settled = true;
+            s.next_retry_ms = None;
+        }
+        return;
+    }
     match (mode, visible) {
         (WindowMode::Floating, true) => {
             m.windows.get_mut(&wid).unwrap().float_frame = Some(frame);

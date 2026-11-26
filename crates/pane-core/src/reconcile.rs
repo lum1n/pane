@@ -183,6 +183,15 @@ pub fn repair(m: &mut Model) -> usize {
     fixed
 }
 
+/// Shows at most a thin strip (60pt) on every display.
+pub fn mostly_hidden(m: &Model, r: &Rect) -> bool {
+    m.displays.iter().all(|d| {
+        d.frame
+            .intersection(r)
+            .is_none_or(|i| i.w <= 60.0 || i.h <= 60.0)
+    })
+}
+
 fn float_window(m: &mut Model, wid: WindowId) {
     let Some(w) = m.windows.get(&wid).cloned() else {
         return;
@@ -296,7 +305,17 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
         let Some(w) = m.windows.get(&wid) else {
             continue;
         };
-        if w.stubborn || w.minimized {
+        if w.minimized {
+            continue;
+        }
+        let target_parked = m.parked.contains_key(&wid) && !m.shutting_down;
+        // A stubborn window refuses its tile, but it must still be hidden
+        // and shown with its workspace.
+        if w.stubborn
+            && m.last_sent
+                .get(&wid)
+                .is_some_and(|s| s.parked == target_parked)
+        {
             continue;
         }
         let Some(app) = m.apps.get(&w.pid) else {
@@ -324,6 +343,7 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
                             attempts: 0,
                             next_retry_ms: None,
                             settled: true,
+                            parked: m.parked.contains_key(&wid),
                         },
                     );
                     false
@@ -351,6 +371,7 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
                 attempts,
                 next_retry_ms: None,
                 settled: false,
+                parked: target_parked,
             },
         );
         if let Some(a) = m.apps.get_mut(&pid) {
@@ -397,7 +418,9 @@ pub fn on_frame_applied(
     let a = actual.unwrap_or(m.windows[&wid].actual);
     let d = s.rect;
     let landed = if parked {
-        a.origin_near(&d, 4.0)
+        // macOS may nudge a window it finds too far off-screen; anything
+        // that leaves at most a thin strip visible counts as hidden.
+        a.origin_near(&d, 4.0) || mostly_hidden(m, &a)
     } else {
         a.origin_near(&d, 1.0) && (a.w - d.w).abs() <= 2.0 && (a.h - d.h).abs() <= 2.0
     };
@@ -428,6 +451,13 @@ pub fn on_frame_applied(
         w.double_set = true;
     }
     let attempts = s.attempts + 1;
+    if attempts as usize > RETRY_BACKOFF_MS.len() && parked {
+        // Never give up on a window over hiding it: settle where it is.
+        let e = m.last_sent.get_mut(&wid).unwrap();
+        e.settled = true;
+        e.next_retry_ms = None;
+        return;
+    }
     if attempts as usize > RETRY_BACKOFF_MS.len() {
         w.stubborn = true;
         let title = w.title.clone();

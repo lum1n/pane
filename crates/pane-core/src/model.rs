@@ -72,6 +72,8 @@ pub struct SentFrame {
     pub attempts: u32,
     pub next_retry_ms: Option<u64>,
     pub settled: bool,
+    /// The frame was a park rect (hiding the window).
+    pub parked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
