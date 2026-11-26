@@ -147,6 +147,9 @@ pub struct Model {
     pub drags: BTreeMap<WindowId, (Rect, u64)>,
     /// The gesture in progress (runtime only, not persisted).
     pub gesture: Option<Gesture>,
+    /// Focus follows mouse: the window the pointer rests over and when to
+    /// focus it (runtime only).
+    pub hover: Option<(WindowId, u64)>,
     /// Target frame per window from the last reconcile.
     pub desired: BTreeMap<WindowId, Rect>,
     /// Frames of profile slots waiting for their app, per workspace.
@@ -209,6 +212,7 @@ impl Model {
             last_sent: BTreeMap::new(),
             drags: BTreeMap::new(),
             gesture: None,
+            hover: None,
             desired: BTreeMap::new(),
             slot_frames: vec![],
             parked: BTreeMap::new(),
@@ -567,6 +571,7 @@ impl Model {
         t.extend(self.pending_launches.iter().map(|p| p.deadline_ms));
         t.extend(self.drags.values().map(|d| d.1));
         t.extend(self.resync_at);
+        t.extend(self.hover.map(|h| h.1));
         if !self.windows.is_empty() {
             t.push(self.next_watchdog_ms.max(self.now_ms));
         }

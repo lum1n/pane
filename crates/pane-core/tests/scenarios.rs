@@ -1909,3 +1909,144 @@ fn summon_brings_a_window_here() {
     });
     assert_eq!(s.launches, vec!["com.example.c".to_string()]);
 }
+
+fn warps(fx: &[Effect]) -> Vec<Rect> {
+    fx.iter()
+        .filter_map(|f| match f {
+            Effect::WarpPointer { rect } => Some(*rect),
+            _ => None,
+        })
+        .collect()
+}
+
+fn keyboard(s: &mut Sim, cmd: Command) -> Vec<Effect> {
+    s.ev(Event::Command { cmd, token: None })
+}
+
+#[test]
+fn mouse_follows_keyboard_focus_across_displays() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "left", CENTER);
+    s.window(100, 2, "right", CENTER);
+    s.focus(100, 2);
+    // Off by default.
+    let fx = keyboard(
+        &mut s,
+        Command::Focus {
+            dir: Direction::Left,
+        },
+    );
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+    assert!(warps(&fx).is_empty());
+
+    s.m.config.settings.mouse_follows_focus = true;
+    let fx = keyboard(
+        &mut s,
+        Command::Focus {
+            dir: Direction::Right,
+        },
+    );
+    assert_eq!(warps(&fx), vec![s.m.desired[&WindowId(2)]]);
+    // Onto the empty display on the right: its middle.
+    let fx = keyboard(
+        &mut s,
+        Command::Focus {
+            dir: Direction::Right,
+        },
+    );
+    assert_eq!(s.m.focus_display.as_deref(), Some("R"));
+    assert_eq!(warps(&fx), vec![s.m.display("R").unwrap().visible_frame]);
+    // Another display through focus-display.
+    let fx = keyboard(&mut s, Command::FocusDisplay { which: Cycle::Prev });
+    assert_eq!(s.m.focus_window, Some(WindowId(2)));
+    assert_eq!(warps(&fx), vec![s.m.desired[&WindowId(2)]]);
+    // No focus change, no warp.
+    let fx = keyboard(&mut s, Command::Focus { dir: Direction::Up });
+    assert!(warps(&fx).is_empty());
+    // Focus the OS reports (a click, Cmd-Tab) does not move the pointer.
+    let fx = s.ev(Event::FocusChanged {
+        pid: 100,
+        wid: Some(WindowId(1)),
+        frontmost: true,
+        activated: true,
+    });
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+    assert!(warps(&fx).is_empty());
+    // A workspace shown from the keyboard: the frame its window gets there.
+    keyboard(&mut s, Command::MoveToWorkspace { name: "2".into() });
+    let fx = keyboard(&mut s, Command::Workspace { name: "2".into() });
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+    let w = warps(&fx);
+    assert_eq!(w, vec![s.m.desired[&WindowId(1)]]);
+    assert!(s
+        .m
+        .display("C")
+        .unwrap()
+        .visible_frame
+        .contains(w[0].center()));
+}
+
+#[test]
+fn focus_follows_mouse_after_the_pointer_rests() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "left", CENTER);
+    s.window(100, 2, "right", CENTER);
+    s.focus(100, 2);
+    let over_1 = s.m.desired[&WindowId(1)].center();
+    let over_2 = s.m.desired[&WindowId(2)].center();
+    let hover = |s: &mut Sim, at: Point| keyboard(s, Command::Hover { at });
+    // Off by default.
+    hover(&mut s, over_1);
+    s.tick(500);
+    assert_eq!(s.m.focus_window, Some(WindowId(2)));
+
+    s.m.config.settings.focus_follows_mouse = true;
+    hover(&mut s, over_1);
+    s.tick(50);
+    assert_eq!(s.m.focus_window, Some(WindowId(2)), "not yet");
+    // Moving on restarts the wait.
+    hover(
+        &mut s,
+        Point {
+            x: over_1.x + 10.0,
+            y: over_1.y,
+        },
+    );
+    s.tick(100);
+    assert_eq!(s.m.focus_window, Some(WindowId(2)), "still not");
+    s.now += 100;
+    let fx = s.ev(Event::Tick);
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+    assert!(fx.iter().any(|f| matches!(
+        f,
+        Effect::Focus {
+            wid: WindowId(1),
+            ..
+        }
+    )));
+    // A key pressed while the pointer waits over a window wins.
+    hover(&mut s, over_2);
+    keyboard(&mut s, Command::FocusWindow { wid: 1 });
+    s.tick(500);
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+    // Over no window (the empty display): nothing happens.
+    hover(
+        &mut s,
+        Point {
+            x: 2500.0,
+            y: 500.0,
+        },
+    );
+    s.tick(500);
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+    // Pointer moves during a gesture never focus.
+    hover(&mut s, over_2);
+    s.m.gesture = Some(pane_core::model::Gesture {
+        wid: WindowId(1),
+        target: None,
+    });
+    s.tick(500);
+    assert_eq!(s.m.focus_window, Some(WindowId(1)));
+}

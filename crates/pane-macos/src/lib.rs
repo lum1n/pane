@@ -14,6 +14,8 @@ pub mod hotkeys;
 #[cfg(target_os = "macos")]
 pub mod observer;
 #[cfg(target_os = "macos")]
+pub mod pointer;
+#[cfg(target_os = "macos")]
 pub mod recovery;
 #[cfg(target_os = "macos")]
 pub mod runloop;

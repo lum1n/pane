@@ -91,3 +91,11 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] `pane subscribe focus --snapshot` prints only `focus` and `snapshot` lines.
 - [ ] Ctrl-C the subscriber, then switch workspaces: Pane keeps working (no crash from SIGPIPE).
 - [ ] Quit Pane: the subscriber exits with status 0.
+
+## Mouse follows focus, focus follows mouse
+- [ ] With `mouse_follows_focus = true`, `mod-l` to the next tile puts the pointer in its middle; `mod-l` onto the next display (also an empty one) moves the pointer there. The pointer does not stutter after a warp.
+- [ ] The pointer already over the window you focus does not move. Clicking a window or Cmd-Tab never moves the pointer.
+- [ ] `mod-2` to a workspace with windows puts the pointer on the window that gets focus, at its new place.
+- [ ] With `focus_follows_mouse = true`, resting the pointer on another tile focuses it (border follows) after a moment; sweeping across tiles quickly does not focus the ones passed over.
+- [ ] Switching workspace under a still pointer does not change focus. Holding Option and pointing (gesture) does not focus anything.
+- [ ] Both toggles in Settings > General > Focus take effect without restarting.

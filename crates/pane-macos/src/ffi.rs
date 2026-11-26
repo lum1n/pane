@@ -207,6 +207,9 @@ extern "C" {
     pub fn CGEventGetFlags(ev: CGEventRef) -> u64;
     /// Global top-left coordinates.
     pub fn CGEventGetLocation(ev: CGEventRef) -> CGPoint;
+    pub fn CGEventCreate(source: *const c_void) -> CGEventRef;
+    pub fn CGWarpMouseCursorPosition(p: CGPoint) -> i32;
+    pub fn CGAssociateMouseAndMouseCursorPosition(connected: u32) -> i32;
 }
 
 #[link(name = "ColorSync", kind = "framework")]
