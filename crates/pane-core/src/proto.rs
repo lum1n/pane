@@ -103,6 +103,8 @@ pub enum Command {
 #[serde(rename_all = "lowercase")]
 pub enum QueryKind {
     Windows,
+    /// Apps Pane observes, with window counts.
+    Apps,
     Displays,
     Workspaces,
     Tree,

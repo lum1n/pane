@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Mirror of `config::Settings` in crates/pane-core.
 struct PaneSettings: Codable, Equatable {
@@ -15,6 +16,8 @@ struct PaneSettings: Codable, Equatable {
     var resize_step: Double
     var auto_float_below: Double
     var modifier: String
+    var float_apps: [String]
+    var tile_apps: [String]
 }
 
 private struct ConfigReply: Codable {
@@ -187,6 +190,8 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsView(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
+            AppsSettingsView(model: model)
+                .tabItem { Label("Apps", systemImage: "square.on.square") }
             HotkeySettingsView(model: model)
                 .tabItem { Label("Hotkeys", systemImage: "keyboard") }
         }
@@ -395,5 +400,136 @@ struct ModFlags {
         if alt { p.append("alt") }
         if shift { p.append("shift") }
         return p.joined(separator: "-")
+    }
+}
+
+/// An app Pane can name: bundle id, or executable name for unbundled apps.
+struct KnownApp: Hashable {
+    var id: String
+    var name: String
+}
+
+private struct AppSummaryRow: Codable {
+    var id: String
+    var name: String
+}
+
+@MainActor
+private struct AppsSettingsView: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppListEditor(
+                title: "Always float",
+                help: "New windows of these apps start floating. Adding an app also floats its open windows.",
+                apps: model.settings?.float_apps ?? [],
+                onChange: { model.set("float_apps", $0) }
+            )
+            AppListEditor(
+                title: "Always tile",
+                help: "For apps Pane floats on its own (unusual windows). Windows that cannot be resized still float.",
+                apps: model.settings?.tile_apps ?? [],
+                onChange: { model.set("tile_apps", $0) }
+            )
+            HStack {
+                if let m = model.message { Text(m).font(.callout).foregroundStyle(.secondary) }
+                Spacer()
+            }
+            Text("Apps started from a terminal (like `cargo run`) are listed by their executable name. `pane query windows` shows why each window is tiled or floating.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+    }
+}
+
+@MainActor
+private struct AppListEditor: View {
+    let title: String
+    let help: String
+    let apps: [String]
+    let onChange: ([String]) -> Void
+    @State private var manual = ""
+
+    /// Running apps: what Pane observes (includes unbundled ones) plus
+    /// regular apps from NSWorkspace.
+    private var running: [KnownApp] {
+        var seen = Set<String>()
+        var out: [KnownApp] = []
+        if case let .success(rows) = PaneCore.shared.request(["cmd": "query", "what": "apps"], as: [AppSummaryRow].self) {
+            for r in rows where !seen.contains(r.id) {
+                seen.insert(r.id)
+                out.append(KnownApp(id: r.id, name: r.name))
+            }
+        }
+        for a in NSWorkspace.shared.runningApplications where a.activationPolicy == .regular {
+            guard let b = a.bundleIdentifier, !seen.contains(b) else { continue }
+            seen.insert(b)
+            out.append(KnownApp(id: b, name: a.localizedName ?? b))
+        }
+        return out.filter { !apps.contains($0.id) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func add(_ id: String) {
+        let id = id.trimmingCharacters(in: .whitespaces)
+        guard !id.isEmpty, !apps.contains(id) else { return }
+        onChange(apps + [id])
+    }
+
+    private func chooseApplication() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        var list = apps
+        for url in panel.urls {
+            if let b = Bundle(url: url)?.bundleIdentifier, !list.contains(b) { list.append(b) }
+        }
+        if list != apps { onChange(list) }
+    }
+
+    var body: some View {
+        GroupBox(title) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(help).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if apps.isEmpty {
+                    Text("No apps").foregroundStyle(.secondary).padding(.vertical, 4)
+                } else {
+                    ForEach(apps, id: \.self) { id in
+                        HStack(spacing: 8) {
+                            Image(nsImage: AppIcons.icon(for: id)).resizable().frame(width: 18, height: 18)
+                            Text(AppIcons.name(for: id))
+                            Text(id).font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Button { onChange(apps.filter { $0 != id }) } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless)
+                                .help("Remove")
+                        }
+                    }
+                }
+                HStack {
+                    Menu("Add Running App") {
+                        ForEach(running, id: \.self) { a in
+                            Button("\(a.name)  (\(a.id))") { add(a.id) }
+                        }
+                    }
+                    .frame(width: 170)
+                    Button("Choose Application…") { chooseApplication() }
+                    TextField("or type an id / glob", text: $manual)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            add(manual)
+                            manual = ""
+                        }
+                }
+            }
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }

@@ -125,6 +125,11 @@ fn float_window(m: &mut Model, wid: WindowId) {
     let wm = m.windows.get_mut(&wid).unwrap();
     wm.mode = WindowMode::Floating;
     wm.float_frame = Some(frame);
+    if wm.stubborn {
+        wm.reason = "refused to take its tile".into();
+    } else {
+        wm.reason = "not enough room for its minimum size".into();
+    }
 }
 
 /// Size to keep while parked: the last on-screen size.

@@ -38,7 +38,11 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
             name,
             regular,
         } => {
-            let Some(bundle_id) = bundle_id else {
+            // Unbundled apps (`cargo run`, scripts) are known by their name.
+            let Some(bundle_id) = bundle_id
+                .filter(|b| !b.is_empty())
+                .or_else(|| (!name.is_empty()).then(|| name.clone()))
+            else {
                 return fx;
             };
             if m.apps.contains_key(&pid) {
@@ -135,6 +139,7 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
             gc_workspaces(m);
             let prev = m.displays.iter().map(|d| d.id.clone()).collect();
             reassign(m, &prev);
+            float_newly_floated_apps(m);
             m.last_sent.clear();
             m.layout_dirty = true;
             fx.push(Effect::UiRequest(UiRequest::info("Config reloaded")));
@@ -200,6 +205,57 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
         }
     }
     fx
+}
+
+/// After a config change: tiled windows that the rules now explicitly
+/// float (an app added to `float_apps`, a new float rule) float right away.
+fn float_newly_floated_apps(m: &mut Model) {
+    let targets: Vec<WindowId> = m
+        .windows
+        .values()
+        .filter(|w| w.mode == WindowMode::Tiled)
+        .filter(|w| {
+            let regular = m.apps.get(&w.pid).is_none_or(|a| a.regular);
+            let traits = WindowTraits {
+                bundle_id: &w.bundle_id,
+                title: &w.title,
+                role: w.role,
+                resizable: w.resizable,
+                modal: false,
+                has_close_button: true,
+                width: w.actual.w,
+                height: w.actual.h,
+                regular_app: regular,
+            };
+            let d = decide(&m.rules, &traits, m.config.settings.auto_float_below);
+            d.explicit && d.action == RuleAction::Float
+        })
+        .map(|w| w.id)
+        .collect();
+    for wid in targets {
+        let w = m.windows[&wid].clone();
+        let area = m
+            .ws(&w.workspace)
+            .and_then(|x| m.display(&x.display))
+            .map(|d| d.visible_frame);
+        let size = w.actual.size();
+        let frame = match area {
+            Some(a) => {
+                let (fw, fh) = (size.w.min(a.w * 0.8), size.h.min(a.h * 0.8));
+                Rect::new(a.center().x - fw / 2.0, a.center().y - fh / 2.0, fw, fh).fit_into(&a)
+            }
+            None => w.actual,
+        };
+        detach_window(m, wid, false);
+        let wi = m.windows.get_mut(&wid).unwrap();
+        wi.mode = WindowMode::Floating;
+        wi.float_frame = Some(frame);
+        wi.reason = "rule: float".into();
+        if let Some(ws) = m.ws_mut(&w.workspace) {
+            ws.floating.push(wid);
+        }
+        refresh_record(m, wid);
+    }
 }
 
 fn info(fx: &mut Vec<Effect>, msg: impl Into<String>) {
@@ -399,6 +455,7 @@ fn discover(
         let d = &decisions[i];
         if d.action == RuleAction::Ignore {
             m.ignored.insert(p.wid);
+            *m.ignored_by_pid.entry(pid).or_default() += 1;
             if let Some(orig) = restore.get(&p.wid) {
                 fx.push(set_frame_once(m, &app, p.wid, *orig));
             }
@@ -429,12 +486,15 @@ fn discover(
 
         // 1. Leaf from state.json / ghost of an app that quit.
         let mut target: Option<(WorkspaceId, Plan)> = None;
+        let mut why: Option<&str> = None;
         if let Some((ws, node)) = find_in_trees(m, p.wid) {
             target = Some((ws, Plan::Replace(node)));
+            why = Some("restored from the saved layout");
         } else if let Some((ws, frame)) = m.expected_floating.remove(&p.wid) {
             if m.ws(&ws).is_some() {
                 let f = frame.unwrap_or_else(|| sane_frame(m, &ws));
                 target = Some((ws, Plan::Float(f)));
+                why = Some("restored from the saved layout (floating)");
             }
         }
         // 2. A profile slot waiting for this app.
@@ -452,6 +512,7 @@ fn discover(
                     )
                 }) {
                     target = Some((s.workspace.clone(), Plan::Replace(node)));
+                    why = Some("profile slot");
                 }
             }
         }
@@ -460,6 +521,11 @@ fn discover(
         if target.is_none() {
             if let Some(ri) = record {
                 let r = m.placements[ri].clone();
+                why = Some(if r.floating {
+                    "remembered placement (floating)"
+                } else {
+                    "remembered placement"
+                });
                 let ws = m.ensure_workspace(&r.workspace, None);
                 if r.floating {
                     let f = r.float_frame.unwrap_or_else(|| sane_frame(m, &ws));
@@ -528,6 +594,7 @@ fn discover(
             double_set: m.config.is_electron(&app.bundle_id),
             float_frame: None,
             seq,
+            reason: why.map(str::to_string).unwrap_or_else(|| d.reason.clone()),
         };
         let root = m.ws(&ws).unwrap().root;
         match plan {
@@ -1438,6 +1505,7 @@ fn cmd_toggle_float(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
             detach_window(m, wid, false);
             let wi = m.windows.get_mut(&wid).unwrap();
             wi.mode = WindowMode::Floating;
+            wi.reason = "floated with toggle-float".into();
             wi.float_frame = Some(frame);
             m.ws_mut(&ws).unwrap().floating.push(wid);
             fx.push(Effect::Raise { pid: w.pid, wid });
@@ -1449,6 +1517,7 @@ fn cmd_toggle_float(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
             m.tree.insert_leaf(root, Leaf::Window(wid), at);
             let wi = m.windows.get_mut(&wid).unwrap();
             wi.mode = WindowMode::Tiled;
+            wi.reason = "tiled with toggle-float".into();
             wi.stubborn = false;
         }
     }
@@ -1525,6 +1594,19 @@ pub struct WindowSummary {
     pub frame: Rect,
     pub minimized: bool,
     pub stubborn: bool,
+    pub reason: String,
+}
+
+#[derive(Serialize)]
+pub struct AppSummary {
+    pub pid: Pid,
+    /// Bundle id, or the executable name for unbundled apps.
+    pub id: String,
+    pub name: String,
+    pub regular: bool,
+    pub unresponsive: bool,
+    pub windows: usize,
+    pub ignored_windows: usize,
 }
 
 #[derive(Serialize)]
@@ -1558,11 +1640,28 @@ fn query(m: &Model, what: QueryKind) -> Reply {
                     frame: w.actual,
                     minimized: w.minimized,
                     stubborn: w.stubborn,
+                    reason: w.reason.clone(),
                 })
                 .collect();
             Reply::data(&v)
         }
         QueryKind::Displays => Reply::data(&m.displays),
+        QueryKind::Apps => {
+            let v: Vec<AppSummary> = m
+                .apps
+                .values()
+                .map(|a| AppSummary {
+                    pid: a.pid,
+                    id: a.bundle_id.clone(),
+                    name: a.name.clone(),
+                    regular: a.regular,
+                    unresponsive: a.unresponsive,
+                    windows: m.windows.values().filter(|w| w.pid == a.pid).count(),
+                    ignored_windows: m.ignored_by_pid.get(&a.pid).copied().unwrap_or(0),
+                })
+                .collect();
+            Reply::data(&v)
+        }
         QueryKind::Workspaces => {
             let v: Vec<WorkspaceSummary> = m
                 .workspaces

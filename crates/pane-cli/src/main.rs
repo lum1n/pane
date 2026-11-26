@@ -26,7 +26,7 @@ enum Cmd {
     MoveTo { name: String },
     /// Print state as JSON.
     Query {
-        #[arg(value_parser = ["windows", "displays", "workspaces", "tree", "snapshot", "config"])]
+        #[arg(value_parser = ["windows", "apps", "displays", "workspaces", "tree", "snapshot", "config"])]
         what: String,
     },
     /// Pull hidden windows back on screen. Works even when Pane is not running.
@@ -87,6 +87,7 @@ fn build(c: &Cmd) -> Result<Command, String> {
         Cmd::Query { what } => Command::Query {
             what: match what.as_str() {
                 "windows" => QueryKind::Windows,
+                "apps" => QueryKind::Apps,
                 "displays" => QueryKind::Displays,
                 "workspaces" => QueryKind::Workspaces,
                 "tree" => QueryKind::Tree,

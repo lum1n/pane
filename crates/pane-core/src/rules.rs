@@ -108,6 +108,8 @@ pub struct Decision {
     pub explicit: bool,
     pub workspace: Option<String>,
     pub display: Option<DisplayRef>,
+    /// Human-readable why, shown by `pane query windows`.
+    pub reason: String,
 }
 
 /// Precedence: explicit ignore > explicit float/tile > auto-float > tile.
@@ -119,46 +121,80 @@ pub fn decide(rules: &[Rule], w: &WindowTraits, auto_float_below: f64) -> Decisi
         .collect();
     let workspace = matching.iter().find_map(|r| r.workspace.clone());
     let display = matching.iter().find_map(|r| r.display.clone());
-    if matching
+    let explicit = if matching
         .iter()
         .any(|r| r.action == Some(RuleAction::Ignore))
     {
-        return Decision {
-            action: RuleAction::Ignore,
-            explicit: true,
-            workspace,
-            display,
-        };
-    }
-    if let Some(a) = matching.iter().find_map(|r| r.action) {
-        return Decision {
-            action: a,
-            explicit: true,
-            workspace,
-            display,
-        };
-    }
-    let action = if should_auto_float(w, auto_float_below) {
-        RuleAction::Float
+        Some(RuleAction::Ignore)
     } else {
-        RuleAction::Tile
+        matching.iter().find_map(|r| r.action)
     };
-    Decision {
-        action,
-        explicit: false,
-        workspace,
-        display,
+    if let Some(action) = explicit {
+        let reason = format!(
+            "rule: {}",
+            match action {
+                RuleAction::Tile => "tile",
+                RuleAction::Float => "float",
+                RuleAction::Ignore => "ignore",
+            }
+        );
+        return Decision {
+            action,
+            explicit: true,
+            workspace,
+            display,
+            reason,
+        };
+    }
+    match float_reason(w, auto_float_below) {
+        Some(why) => Decision {
+            action: RuleAction::Float,
+            explicit: false,
+            workspace,
+            display,
+            reason: format!("auto-float: {why}"),
+        },
+        None => Decision {
+            action: RuleAction::Tile,
+            explicit: false,
+            workspace,
+            display,
+            reason: "standard window".into(),
+        },
     }
 }
 
+/// Why a window floats automatically, or `None` to tile it.
+///
+/// A missing close button only counts for non-standard windows: apps with
+/// custom (frameless) title bars often have no AXCloseButton.
+pub fn float_reason(w: &WindowTraits, below: f64) -> Option<&'static str> {
+    if w.role != WindowRole::Standard {
+        return Some(match w.role {
+            WindowRole::Dialog => "dialog",
+            WindowRole::Sheet => "sheet",
+            WindowRole::Floating => "floating panel",
+            WindowRole::Popover => "popover",
+            _ => "not a standard window (unusual AX subrole)",
+        });
+    }
+    if !w.resizable {
+        return Some("not resizable");
+    }
+    if w.modal {
+        return Some("modal");
+    }
+    if !w.regular_app {
+        return Some("app is not a regular Dock app (menu bar / accessory)");
+    }
+    if (w.width > 0.0 && w.width < below) || (w.height > 0.0 && w.height < below) {
+        return Some("smaller than auto_float_below");
+    }
+    None
+}
+
 pub fn should_auto_float(w: &WindowTraits, below: f64) -> bool {
-    w.role != WindowRole::Standard
-        || !w.resizable
-        || w.modal
-        || !w.has_close_button
-        || !w.regular_app
-        || (w.width > 0.0 && w.width < below)
-        || (w.height > 0.0 && w.height < below)
+    float_reason(w, below).is_some()
 }
 
 #[cfg(test)]
@@ -233,5 +269,10 @@ mod tests {
         let mut w = std_window("com.example", "x");
         w.resizable = false;
         assert_eq!(decide(&[], &w, 120.0).action, RuleAction::Float);
+        assert_eq!(decide(&[], &w, 120.0).reason, "auto-float: not resizable");
+        // Frameless standard windows without a close button still tile.
+        let mut w = std_window("com.example", "x");
+        w.has_close_button = false;
+        assert_eq!(decide(&[], &w, 120.0).action, RuleAction::Tile);
     }
 }

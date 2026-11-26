@@ -44,7 +44,7 @@ pane do "focus left"      pane profile list|apply NAME|capture NAME|delete NAME
 pane reload               pane recover [--all-apps]
 ```
 
-Settings (gaps, behaviour, startup profile, all hotkeys) are in **Settings…** in the menu. They are stored in `~/Library/Application Support/Pane/config.toml`, which you can also edit by hand; see [docs/config.md](docs/config.md). Displays, workspaces and window rules are edited in the file.
+Settings (gaps, behaviour, startup profile, apps that always float or tile, all hotkeys) are in **Settings…** in the menu. They are stored in `~/Library/Application Support/Pane/config.toml`, which you can also edit by hand; see [docs/config.md](docs/config.md). Displays, workspaces and window rules are edited in the file.
 
 ## Recovery
 

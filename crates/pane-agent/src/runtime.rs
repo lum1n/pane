@@ -315,12 +315,9 @@ fn spawn_app_poller(handle: Handle, every: Duration) -> Result<(), String> {
                     handle.send_event(Event::AppTerminated { pid });
                 }
                 if first {
-                    let _ = handle.tx.send(Msg::InitialApps(
-                        apps.iter()
-                            .filter(|a| a.bundle_id.is_some())
-                            .map(|a| a.pid)
-                            .collect(),
-                    ));
+                    let _ = handle
+                        .tx
+                        .send(Msg::InitialApps(apps.iter().map(|a| a.pid).collect()));
                     first = false;
                 }
                 std::thread::sleep(every);

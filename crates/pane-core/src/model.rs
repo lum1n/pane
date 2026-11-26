@@ -45,6 +45,8 @@ pub struct WindowInfo {
     pub float_frame: Option<Rect>,
     /// Creation order, for "newest" decisions.
     pub seq: u64,
+    /// Why it is tiled or floating (for `pane query windows`).
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -99,6 +101,8 @@ pub struct Model {
     pub tree: Tree,
     pub windows: BTreeMap<WindowId, WindowInfo>,
     pub ignored: BTreeSet<WindowId>,
+    /// Windows ignored by rules, per app (diagnostics).
+    pub ignored_by_pid: BTreeMap<Pid, usize>,
     pub apps: BTreeMap<Pid, AppInfo>,
     pub placements: Vec<PlacementRecord>,
     pub focus_display: Option<DisplayId>,
@@ -142,6 +146,7 @@ impl Model {
             tree: Tree::new(),
             windows: BTreeMap::new(),
             ignored: BTreeSet::new(),
+            ignored_by_pid: BTreeMap::new(),
             apps: BTreeMap::new(),
             placements: vec![],
             focus_display: None,

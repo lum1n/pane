@@ -711,3 +711,31 @@ fn dragged_tiled_window_snaps_back_after_the_drag() {
     s.tick(400);
     assert_eq!(s.frame(1), home);
 }
+
+#[test]
+fn unbundled_apps_tile_and_float_apps_float() {
+    let mut s = Sim::new();
+    // `cargo run`: no bundle id, known by its executable name.
+    s.ev(Event::AppLaunched {
+        pid: 300,
+        bundle_id: None,
+        name: "my-app".into(),
+        regular: true,
+    });
+    s.window(300, 30, "my app", CENTER);
+    assert_eq!(s.m.windows[&WindowId(30)].bundle_id, "my-app");
+    assert_eq!(s.m.windows[&WindowId(30)].mode, WindowMode::Tiled);
+    s.launch(100, "com.apple.calculator");
+    s.window(100, 1, "Calculator", CENTER);
+    assert_eq!(s.m.windows[&WindowId(1)].mode, WindowMode::Tiled);
+
+    // Adding the app to float_apps floats its open window and new ones.
+    let cfg = Config::parse("[settings]\nfloat_apps = [\"com.apple.calculator\"]\n").unwrap();
+    s.ev(Event::ConfigLoaded {
+        config: Box::new(cfg),
+    });
+    assert_eq!(s.m.windows[&WindowId(1)].mode, WindowMode::Floating);
+    assert_eq!(s.frame(30).w, 1908.0, "my-app takes the whole width again");
+    s.window(100, 2, "Calculator 2", CENTER);
+    assert_eq!(s.m.windows[&WindowId(2)].mode, WindowMode::Floating);
+}

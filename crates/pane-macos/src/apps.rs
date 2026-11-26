@@ -115,13 +115,31 @@ pub fn app_info(pid: i32) -> Option<RunningApp> {
         if terminated {
             return None;
         }
+        let policy: isize = msg_send![&*app, activationPolicy];
+        // NSApplicationActivationPolicyProhibited: background processes that
+        // cannot own normal windows.
+        if policy == 2 {
+            return None;
+        }
         let bundle: Option<Retained<NSString>> = msg_send![&*app, bundleIdentifier];
         let name: Option<Retained<NSString>> = msg_send![&*app, localizedName];
-        let policy: isize = msg_send![&*app, activationPolicy];
+        // Unbundled binaries (`cargo run`) have no bundle id: use the
+        // executable's file name so rules and placements can name them.
+        let exe = || -> Option<String> {
+            let url: Option<Retained<AnyObject>> = msg_send![&*app, executableURL];
+            let url = url?;
+            let last: Option<Retained<NSString>> = msg_send![&*url, lastPathComponent];
+            last.map(|s| s.to_string()).filter(|s| !s.is_empty())
+        };
+        let bundle_id = bundle
+            .map(|b| b.to_string())
+            .filter(|b| !b.is_empty())
+            .or_else(exe);
+        let name = name.map(|n| n.to_string()).filter(|n| !n.is_empty());
         Some(RunningApp {
             pid,
-            bundle_id: bundle.map(|b| b.to_string()),
-            name: name.map(|n| n.to_string()).unwrap_or_default(),
+            name: name.or_else(|| bundle_id.clone()).unwrap_or_default(),
+            bundle_id,
             regular: policy == 0,
         })
     })

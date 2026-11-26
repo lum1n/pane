@@ -53,6 +53,12 @@ pub struct Settings {
     /// "cmd-ctrl", "hyper" (cmd-ctrl-alt-shift) or "meh" (ctrl-alt-shift).
     /// Also what `mod` means in `[shortcuts]`.
     pub modifier: String,
+    /// Apps whose windows always start floating: bundle ids (or executable
+    /// names for unbundled apps), `*` globs allowed.
+    pub float_apps: Vec<String>,
+    /// Apps whose windows always tile, overriding automatic floating (for
+    /// apps with unusual windows). Explicit `[[rule]]`s still win.
+    pub tile_apps: Vec<String>,
 }
 
 impl Default for Settings {
@@ -75,6 +81,8 @@ impl Default for Settings {
             resize_step: 0.05,
             auto_float_below: 120.0,
             modifier: "alt".into(),
+            float_apps: vec![],
+            tile_apps: vec![],
         }
     }
 }
@@ -637,7 +645,24 @@ impl Config {
             .collect()
     }
 
+    /// `[[rule]]`s in order, then one float rule per `float_apps` entry (so
+    /// an explicit rule for the same app wins).
     pub fn compiled_rules(&self) -> Result<Vec<Rule>, ConfigError> {
+        let list = |apps: &[String], action: RuleAction, name: &'static str| {
+            apps.iter()
+                .map(move |app| {
+                    Rule::new(Some(app), None, Some(action), None, None)
+                        .map_err(|e| ConfigError::plain(format!("{name} `{app}`: {e}")))
+                })
+                .collect::<Vec<_>>()
+        };
+        let float_apps = list(&self.settings.float_apps, RuleAction::Float, "float_apps")
+            .into_iter()
+            .chain(list(
+                &self.settings.tile_apps,
+                RuleAction::Tile,
+                "tile_apps",
+            ));
         self.rules
             .iter()
             .enumerate()
@@ -651,6 +676,7 @@ impl Config {
                 )
                 .map_err(|e| ConfigError::plain(format!("rule #{}: {e}", i + 1)))
             })
+            .chain(float_apps)
             .collect()
     }
 
@@ -774,6 +800,12 @@ return_workspaces_on_reconnect = true
 # "hyper" (cmd-ctrl-alt-shift), "meh" (ctrl-alt-shift), ...
 # Moving adds shift and resizing adds ctrl (or the next free modifier).
 modifier = "alt"
+
+# Apps whose windows always start floating (bundle ids, or the executable
+# name for apps started from a terminal; * globs work).
+# float_apps = ["com.apple.calculator", "com.apple.systempreferences"]
+# Apps whose windows always tile, even if Pane would float them.
+# tile_apps = ["my-app"]
 
 # Name displays so workspaces and rules can refer to them.
 # Match by position (left/center/right), uuid = "..." or match_name = "DELL".
@@ -940,6 +972,38 @@ mod tests {
         assert_eq!(row("focus left").default.as_deref(), Some("alt-h"));
         assert_eq!(row("recover").chords, vec!["alt-x"]);
         assert_eq!(row("recover").default, None);
+    }
+
+    #[test]
+    fn float_apps_become_float_rules() {
+        use crate::rules::{decide, WindowRole, WindowTraits};
+        let c = Config::parse("[settings]\nfloat_apps = [\"com.apple.calculator\", \"my-*\"]\n[[rule]]\napp = \"my-tool\"\naction = \"tile\"\n").unwrap();
+        let rules = c.compiled_rules().unwrap();
+        let w = |b: &'static str| WindowTraits {
+            bundle_id: b,
+            title: "x",
+            role: WindowRole::Standard,
+            resizable: true,
+            modal: false,
+            has_close_button: true,
+            width: 800.0,
+            height: 600.0,
+            regular_app: true,
+        };
+        assert_eq!(
+            decide(&rules, &w("com.apple.calculator"), 120.0).action,
+            RuleAction::Float
+        );
+        assert_eq!(
+            decide(&rules, &w("my-game"), 120.0).action,
+            RuleAction::Float
+        );
+        assert_eq!(
+            decide(&rules, &w("my-tool"), 120.0).action,
+            RuleAction::Tile,
+            "explicit rule wins"
+        );
+        assert_eq!(decide(&rules, &w("other"), 120.0).action, RuleAction::Tile);
     }
 
     #[test]

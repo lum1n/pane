@@ -16,6 +16,8 @@ startup_profile = "work"         # applied once the first scan finishes
 electron_bundle_ids = ["com.microsoft.VSCode"]   # use size/position/size when moving
 resize_step = 0.05
 auto_float_below = 120           # windows narrower or shorter than this float
+float_apps = ["com.apple.calculator"]   # always start floating (bundle id or executable name, globs ok)
+tile_apps = ["my-app"]           # always tile, even if Pane would float them
 modifier = "alt"                 # behind every default hotkey: "alt", "ctrl-alt", "cmd-ctrl",
                                  # "hyper" (cmd-ctrl-alt-shift), "meh" (ctrl-alt-shift)
 
@@ -57,6 +59,19 @@ Defaults come in three layers, all built from `modifier`:
 If the modifier already includes Shift or Control, those layers take the next free key, in the order Control, Option, Command, Shift. The two layers never collide. With `hyper` every modifier is already in use, so only the base layer gets defaults; bind the rest in `[shortcuts]` or in Settings.
 
 Shortcuts set in Settings are written relative to the modifier (`"mod-cmd-y"`) when they include it, so they move with it if you change the modifier later.
+
+## Which windows tile
+
+Pane tiles standard, resizable windows of regular (Dock) apps. It floats:
+- dialogs, sheets and panels;
+- windows that cannot be resized;
+- modal windows;
+- windows of menu-bar or accessory apps;
+- windows smaller than `auto_float_below`.
+
+`float_apps`, `tile_apps` and `[[rule]]`s override this (rules first). Apps started from a terminal, such as `cargo run`, have no bundle id; Pane names them by their executable, e.g. `my-app`.
+
+`pane query windows` shows a `reason` for every window, for example `auto-float: not resizable`. `pane query apps` lists the apps Pane observes. If an app is missing from `pane query apps`, Pane has not seen a window from it.
 
 ## Display references
 
