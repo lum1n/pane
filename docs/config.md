@@ -143,6 +143,7 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `toggle-orientation`, `toggle-layout`, `toggle-float` | |
 | `toggle-fullscreen` | zoom the focused tile to fill its display; ends when another window there is focused or a new tile opens |
 | `swap-workspaces` | swap with the next display |
+| `undo` | put back the layout from before the last move, resize, gesture or edge drag, `move-to-workspace`, toggle (orientation, layout, float) or `profile-apply`; again to go further back (20 steps). Windows opened since stay, closed ones are left out (`mod-z`) |
 | `reload`, `profile-picker`, `open-editor` | |
 | `palette` | open the window and command palette (`mod-/`) |
 | `focus-window ID` | show the window's workspace and focus it, restoring it if minimized (`pane query windows` lists ids) |

@@ -1909,3 +1909,222 @@ fn summon_brings_a_window_here() {
     });
     assert_eq!(s.launches, vec!["com.example.c".to_string()]);
 }
+
+// ---------------------------------------------------------------- undo
+
+fn frames(s: &Sim, wids: &[u32]) -> Vec<Rect> {
+    wids.iter().map(|w| s.frame(*w)).collect()
+}
+
+fn undo(s: &mut Sim) -> Reply {
+    s.cmd(Command::Undo)
+}
+
+fn three_tiles() -> Sim {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, "w", CENTER);
+    }
+    s.focus(100, 3);
+    s
+}
+
+#[test]
+fn undo_reverts_moves_resizes_and_toggles_one_at_a_time() {
+    let mut s = three_tiles();
+    assert!(matches!(undo(&mut s), Reply::Error { .. }), "nothing yet");
+    let start = frames(&s, &[1, 2, 3]);
+
+    s.cmd(Command::Move {
+        dir: Direction::Left,
+    });
+    let moved = frames(&s, &[1, 2, 3]);
+    assert_ne!(moved, start);
+    s.cmd(Command::Resize {
+        axis: pane_core::Orientation::Horizontal,
+        delta: 0.1,
+    });
+    let resized = frames(&s, &[1, 2, 3]);
+    assert_ne!(resized, moved);
+    s.cmd(Command::ToggleOrientation);
+    assert_ne!(frames(&s, &[1, 2, 3]), resized);
+    // Focus changes alone are not layout changes.
+    s.cmd(Command::Focus { dir: Direction::Up });
+    assert_eq!(s.m.undo.len(), 3);
+
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(frames(&s, &[1, 2, 3]), resized);
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(frames(&s, &[1, 2, 3]), moved);
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+    assert_eq!(s.m.focused_window(), Some(WindowId(3)));
+    assert!(matches!(undo(&mut s), Reply::Error { .. }));
+}
+
+#[test]
+fn undo_brings_a_window_back_from_another_workspace() {
+    let mut s = three_tiles();
+    let start = frames(&s, &[1, 2, 3]);
+    let home = s.m.windows[&WindowId(3)].workspace.clone();
+    s.cmd(Command::MoveToWorkspace { name: "7".into() });
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/7");
+    assert!(!s.on_screen(3));
+
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, home);
+    assert!(s.on_screen(3));
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+    assert_eq!(s.m.focused_window(), Some(WindowId(3)));
+    assert!(s.m.ws("C/7").is_none(), "the emptied workspace is dropped");
+
+    // Across a display edge too.
+    s.cmd(Command::Move {
+        dir: Direction::Right,
+    });
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "R/1");
+    undo(&mut s);
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, home);
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+    assert_eq!(s.m.focus_display.as_deref(), Some("C"));
+}
+
+#[test]
+fn undo_reverts_a_gesture_swap_and_an_edge_drag() {
+    let mut s = two_tiles();
+    s.tick(2000);
+    let (a, b) = (s.frame(1), s.frame(2));
+    s.gesture(1, a.center(), b.center());
+    assert_eq!((s.frame(1), s.frame(2)), (b, a));
+    undo(&mut s);
+    assert_eq!((s.frame(1), s.frame(2)), (a, b));
+
+    drag_to(&mut s, 1, Rect::new(a.x, a.y, a.w + 100.0, a.h));
+    assert!((s.frame(1).w - (a.w + 100.0)).abs() <= 2.0);
+    undo(&mut s);
+    assert_eq!((s.frame(1), s.frame(2)), (a, b));
+}
+
+#[test]
+fn undo_reverts_toggle_float() {
+    let mut s = three_tiles();
+    let start = frames(&s, &[1, 2, 3]);
+    s.cmd(Command::ToggleFloat);
+    assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Floating);
+    undo(&mut s);
+    assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Tiled);
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+}
+
+#[test]
+fn undo_reverts_a_profile_apply() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(200, "com.apple.Safari");
+    s.window(200, 2, "Web", CENTER);
+    let full = s.frame(2);
+    let p = pane_core::profile::Profile {
+        name: "work".into(),
+        version: 1,
+        when: None,
+        displays: vec![pane_core::profile::ProfileDisplay {
+            display: "center".into(),
+            workspace: "3".into(),
+            tree: two_up("com.apple.mail", "com.apple.Safari"),
+            visible: true,
+        }],
+    };
+    s.cmd(Command::ProfileApply {
+        name: None,
+        profile: Some(p),
+    });
+    assert_eq!(s.m.active_profile.as_deref(), Some("work"));
+    assert_eq!(s.m.visible["C"], "C/3");
+    assert!(s.frame(2).w < 1000.0);
+
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(s.m.active_profile, None);
+    assert_eq!(s.m.visible["C"], "C/1");
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "C/1");
+    assert_eq!(s.m.windows[&WindowId(2)].slot, None);
+    assert_eq!(s.frame(2), full);
+    // Mail arriving later no longer has a slot to fill: it just tiles.
+    s.launch(300, "com.apple.mail");
+    s.window(300, 3, "Inbox", CENTER);
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/1");
+}
+
+#[test]
+fn undo_keeps_windows_opened_since_and_skips_closed_ones() {
+    let mut s = three_tiles();
+    s.cmd(Command::Move {
+        dir: Direction::Left,
+    });
+    s.window(100, 4, "new", CENTER);
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    undo(&mut s);
+    let ws = s.m.windows[&WindowId(2)].workspace.clone();
+    let root = s.m.ws(&ws).unwrap().root;
+    assert_eq!(
+        s.m.tree.windows(root),
+        vec![WindowId(2), WindowId(3), WindowId(4)],
+        "old order, the new window kept at the end, the closed one gone"
+    );
+    for w in [2, 3, 4] {
+        assert!(s.on_screen(w));
+    }
+
+    // A layout whose windows have all closed changes nothing: skipped.
+    let mut s = three_tiles();
+    s.cmd(Command::MoveToWorkspace { name: "7".into() });
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(3),
+    });
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(2),
+    });
+    s.tick(11 * 60 * 1000);
+    assert!(matches!(undo(&mut s), Reply::Error { .. }));
+}
+
+#[test]
+fn undo_keeps_the_last_twenty_layouts() {
+    let mut s = three_tiles();
+    let mut seen = vec![frames(&s, &[1, 2, 3])];
+    for i in 0..25 {
+        let delta = if i % 2 == 0 { 0.02 } else { -0.01 };
+        s.cmd(Command::Resize {
+            axis: pane_core::Orientation::Horizontal,
+            delta,
+        });
+        seen.push(frames(&s, &[1, 2, 3]));
+    }
+    assert_eq!(s.m.undo.len(), pane_core::undo::UNDO_DEPTH);
+    for i in 0..20 {
+        assert_eq!(undo(&mut s), Reply::ok());
+        assert_eq!(frames(&s, &[1, 2, 3]), seen[24 - i]);
+    }
+    assert!(matches!(undo(&mut s), Reply::Error { .. }));
+}
+
+#[test]
+fn undo_is_bound_to_mod_z() {
+    let c = Config::default();
+    let base = c.modifier().unwrap();
+    assert!(c
+        .default_bindings(&base)
+        .iter()
+        .any(|(chord, cmd)| cmd == "undo" && chord.ends_with("-z")));
+    assert_eq!(Command::parse("undo"), Ok(Command::Undo));
+}

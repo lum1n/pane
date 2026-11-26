@@ -67,6 +67,12 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] `>` lists commands with their shortcuts (⌥⇧F etc.); Enter runs one. Profiles apply.
 - [ ] Arrow keys, Page Up/Down and clicking a row work; app icons show.
 
+## Undo
+- [ ] Move, resize (keys and edge drag), swap with a gesture, toggle split direction and float: each `mod-z` puts back one step, windows land in their old tiles.
+- [ ] `mod-shift-3` then `mod-z`: the window comes back to its tile on the workspace you are on and has focus.
+- [ ] Apply a profile that shows another workspace, then `mod-z`: the previous workspace and tiles come back and the menu no longer shows the profile as active.
+- [ ] `mod-z` with nothing to undo shows an error notice and changes nothing.
+
 ## Scratchpad and summon
 - [ ] With `[[scratchpad]] app = "com.googlecode.iterm2" key = "mod-grave"` and iTerm not running, Option-` opens iTerm and its first window appears as a centered float at the configured size on the focused display, focused.
 - [ ] Option-` again hides it and focus returns to the window you were in; Option-` brings it back. Nothing flashes in the park corner while it is shown.

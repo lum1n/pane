@@ -1,6 +1,6 @@
 //! The whole window-manager state owned by the core thread.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::Serialize;
 
@@ -170,6 +170,9 @@ pub struct Model {
     pub auto_topology: Option<String>,
     /// Floating windows from `state.json` waiting to be rediscovered.
     pub expected_floating: BTreeMap<WindowId, (WorkspaceId, Option<Rect>)>,
+    /// Layouts from before the last tree-changing commands, oldest first
+    /// (at most `undo::UNDO_DEPTH`; runtime only, not persisted).
+    pub undo: VecDeque<crate::undo::LayoutState>,
     pub now_ms: u64,
     pub gen: u64,
     pub seq: u64,
@@ -222,6 +225,7 @@ impl Model {
             expected_floating: BTreeMap::new(),
             active_profile: None,
             auto_topology: None,
+            undo: VecDeque::new(),
             now_ms,
             gen: 0,
             seq: 0,
