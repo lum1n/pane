@@ -19,7 +19,7 @@ The boundary is a C ABI with JSON payloads (`crates/pane-ffi/include/pane.h`). T
 | `pane-macos` | `AxElement`, observers, per-app workers, displays, CGEventTap hotkeys, recovery mirror | macOS only (empty elsewhere) |
 | `pane-agent` | Core thread, worker registry, persistence, `run.lock`, control socket, `pane-agentd` | any, via the `Platform` trait |
 | `pane-ffi` | `pane_start`, `pane_command`, `pane_event`, `pane_shutdown`, `pane_free` | staticlib |
-| `pane-cli` | `pane` | any, with offline recovery on macOS |
+| `pane-cli` | `pane` | any, with offline recovery on macOS and an offline `pane doctor` |
 
 ## Data flow
 

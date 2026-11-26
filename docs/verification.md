@@ -91,3 +91,12 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] `pane subscribe focus --snapshot` prints only `focus` and `snapshot` lines.
 - [ ] Ctrl-C the subscriber, then switch workspaces: Pane keeps working (no crash from SIGPIPE).
 - [ ] Quit Pane: the subscriber exits with status 0.
+
+## Doctor
+- [ ] With Pane running and permissions granted, `pane doctor` shows Accessibility and Input Monitoring for Pane (no "this terminal"), `Hotkeys: running`, the displays as in `pane query displays`, `run.lock: held by pid` Pane's pid, and exits 0.
+- [ ] Turn Pane off in Privacy & Security > Accessibility: `pane doctor` says NOT granted and exits 1.
+- [ ] `kill -STOP` an app's pid, wait for the notice: it is listed as not responding. `kill -CONT` and it goes away.
+- [ ] A window that refuses its tile (fixed-size app) is listed under its app with `refused to take its tile`.
+- [ ] Break `config.toml` (`gaps = 999`) without reloading: `Config: ERROR` with the message. Reload, fix the file, run again: "fixed on disk, but Pane still runs on defaults".
+- [ ] Quit Pane: `pane doctor` says not running, shows the terminal's permissions, the displays, and `run.lock: none`.
+- [ ] `kill -9` Pane: `run.lock: STALE` with the parked window count; starting Pane clears it.

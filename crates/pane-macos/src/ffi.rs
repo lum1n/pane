@@ -207,6 +207,8 @@ extern "C" {
     pub fn CGEventGetFlags(ev: CGEventRef) -> u64;
     /// Global top-left coordinates.
     pub fn CGEventGetLocation(ev: CGEventRef) -> CGPoint;
+    /// Input Monitoring granted (macOS 10.15+). Never prompts.
+    pub fn CGPreflightListenEventAccess() -> bool;
 }
 
 #[link(name = "ColorSync", kind = "framework")]

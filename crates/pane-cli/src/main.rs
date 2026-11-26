@@ -53,6 +53,14 @@ enum Cmd {
     Do { command: Vec<String> },
     /// Check that Pane is running.
     Ping,
+    /// Diagnose: Accessibility and Input Monitoring, displays, apps whose
+    /// windows Pane gave up on (and why), config errors, a stale run.lock.
+    /// Works partly when Pane is not running. Exits 1 if it finds problems.
+    Doctor {
+        /// Print the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print events as JSON lines as they happen, starting with the current
     /// state: `pane subscribe workspace-shown focus`. No kinds = all but
     /// snapshot. Exits when Pane quits.
@@ -68,6 +76,9 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let paths = Paths::new(cli.dir.clone().unwrap_or_else(Paths::default_root));
+    if let Cmd::Doctor { json } = cli.cmd {
+        return doctor(&paths, json);
+    }
     let cmd = match build(&cli.cmd) {
         Ok(c) => c,
         Err(e) => {
@@ -153,6 +164,7 @@ fn build(c: &Cmd) -> Result<Command, String> {
         },
         Cmd::Do { command } => Command::parse(&command.join(" "))?,
         Cmd::Ping => Command::Ping,
+        Cmd::Doctor { .. } => Command::Doctor,
         Cmd::Subscribe { kinds, snapshot } => {
             let mut events: Vec<EventKind> =
                 kinds.iter().filter_map(|k| EventKind::parse(k)).collect();
@@ -189,6 +201,42 @@ fn subscribe(paths: &Paths, events: Vec<EventKind>) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+fn doctor(paths: &Paths, json: bool) -> ExitCode {
+    use pane_agent::doctor;
+    let live = match pane_agent::control::request(
+        &paths.socket(),
+        &Command::Doctor,
+        Duration::from_secs(5),
+    ) {
+        Ok(Reply::Ok { data }) => {
+            serde_json::from_value::<doctor::Live>(data).map_err(|e| format!("bad reply: {e}"))
+        }
+        Ok(Reply::Error { message }) => Err(message),
+        Err(e) => Err(match e.kind() {
+            std::io::ErrorKind::NotFound => "no control socket".into(),
+            std::io::ErrorKind::ConnectionRefused => {
+                "control socket left behind, nobody listening".into()
+            }
+            _ => format!("control socket: {e}"),
+        }),
+    };
+    let platform = pane_agent::platform::native();
+    let report = doctor::gather(paths, live, platform.as_ref());
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
+    } else {
+        print!("{}", report.render());
+    }
+    if report.problems() == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn send(paths: &Paths, cmd: &Command) -> std::io::Result<Reply> {

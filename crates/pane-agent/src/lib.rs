@@ -3,6 +3,7 @@
 //! headless `pane-agentd` and, through `pane-ffi`, by `Pane.app`.
 
 pub mod control;
+pub mod doctor;
 pub mod lockfile;
 pub mod logging;
 pub mod paths;
