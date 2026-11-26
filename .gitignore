@@ -1,0 +1,5 @@
+/target
+/build
+/shell/.build
+/shell/.swiftpm
+.DS_Store

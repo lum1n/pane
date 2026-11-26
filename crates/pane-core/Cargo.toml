@@ -1,0 +1,15 @@
+[package]
+name = "pane-core"
+description = "Pure window-manager model: tree, layout, workspaces, displays, identity, profiles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+slotmap.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+smol_str.workspace = true

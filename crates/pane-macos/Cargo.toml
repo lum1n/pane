@@ -1,0 +1,17 @@
+[package]
+name = "pane-macos"
+description = "macOS glue: Accessibility, displays, hotkeys, per-app workers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pane-core.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+objc2 = "0.6"
+objc2-foundation = "0.3"

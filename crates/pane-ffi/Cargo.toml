@@ -1,0 +1,16 @@
+[package]
+name = "pane-ffi"
+description = "C ABI used by the Swift shell (JSON payloads)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+pane-core.workspace = true
+pane-agent.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true

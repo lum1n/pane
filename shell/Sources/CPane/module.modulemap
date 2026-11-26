@@ -1,0 +1,5 @@
+module CPane [system] {
+    header "include/pane.h"
+    link "pane_ffi"
+    export *
+}
