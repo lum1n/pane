@@ -1278,6 +1278,14 @@ fn frame_changed(m: &mut Model, wid: WindowId, frame: Rect, fx: &mut Vec<Effect>
                         || (frame.h - old.h).abs() > DRAG_THRESHOLD
                     {
                         m.drags.insert(wid, (frame, m.now_ms + SNAP_BACK_MS));
+                        // A title-bar drag keeps the size. One taken for it
+                        // was the start of a left or top edge drag whose
+                        // move was reported before its resize: letting go
+                        // would drop the window and lose the resize.
+                        if m.gesture.as_ref().is_some_and(|g| g.plain && g.wid == wid) {
+                            m.gesture = None;
+                            fx.push(Effect::UiRequest(UiRequest::GestureOverlayHide));
+                        }
                     } else if let Some(d) = m.drags.get_mut(&wid) {
                         *d = (frame, m.now_ms + SNAP_BACK_MS);
                     } else if title_drag(m, wid, old, frame, fx) {

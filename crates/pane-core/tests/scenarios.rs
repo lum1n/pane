@@ -999,6 +999,48 @@ fn dragging_a_tile_edge_resizes_against_its_neighbour_only() {
 }
 
 #[test]
+fn left_edge_drag_reported_as_a_move_first_still_resizes() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, "w", CENTER);
+    }
+    s.now += 500;
+    let (a, b) = (s.frame(1), s.frame(2));
+    // Window 2's left edge, dragged left with the button held. macOS
+    // reports each step's move before its resize, so early on the window
+    // looks dragged by its title bar.
+    for i in 1..=10 {
+        let dx = 10.0 * i as f64;
+        let at = pt(b.x - dx, b.y + b.h / 2.0);
+        s.drag_fx(DragPhase::Move { at });
+        let prev = s.frame(2);
+        for r in [
+            Rect::new(b.x - dx, b.y, prev.w, b.h),
+            Rect::new(b.x - dx, b.y, b.w + dx, b.h),
+        ] {
+            s.frames.insert(WindowId(2), r);
+            s.now += 8;
+            s.ev(Event::WindowFrameChanged {
+                pid: 100,
+                wid: WindowId(2),
+                frame: r,
+            });
+        }
+    }
+    let fx = s.drag_fx(DragPhase::Release {
+        at: pt(b.x - 100.0, b.y + b.h / 2.0),
+    });
+    assert!(s.m.gesture.is_none());
+    assert!(overlay(&fx).is_none());
+    s.tick(400);
+    assert!((s.frame(2).w - (b.w + 100.0)).abs() <= 2.0, "grew: {:?}", s.frame(2));
+    assert!((s.frame(1).w - (a.w - 100.0)).abs() <= 2.0, "gave: {:?}", s.frame(1));
+    assert!(s.frame(1).x < s.frame(2).x, "order kept");
+}
+
+#[test]
 fn dragging_an_outer_edge_snaps_back() {
     let mut s = Sim::new();
     s.tick(2000);
@@ -2974,3 +3016,4 @@ fn trackpad_swipes_cycle_the_display_under_the_pointer() {
         .any(|f| matches!(f, Effect::UiRequest(UiRequest::Palette))));
     assert_eq!(s.m.visible["C"], "C/2");
 }
+
