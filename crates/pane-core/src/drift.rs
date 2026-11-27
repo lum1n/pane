@@ -596,4 +596,107 @@ mod tests {
         assert_eq!(d.entries[1].updated, None);
         assert_eq!(d.updated.displays.len(), 1);
     }
+
+    fn one(saved: SerNode, live: SerNode) -> EntryDiff {
+        let d = run(
+            &profile(vec![entry("left", "1", saved)]),
+            &profile(vec![entry("left", "1", live)]),
+        );
+        d.entries.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn duplicate_apps_are_counted_per_window() {
+        let e = one(
+            row(&[1.0, 1.0], vec![slot("term"), slot("term")]),
+            row(&[1.0], vec![slot("term")]),
+        );
+        assert_eq!(e.change, EntryChange::Changed);
+        assert_eq!(
+            (e.added_apps, e.removed_apps),
+            (vec![], vec!["term".into()])
+        );
+        let e = one(
+            row(&[1.0], vec![slot("term")]),
+            row(&[1.0, 1.0], vec![slot("term"), slot("term")]),
+        );
+        assert_eq!(
+            (e.added_apps, e.removed_apps),
+            (vec!["term".into()], vec![])
+        );
+    }
+
+    #[test]
+    fn order_and_layout_are_arrangement_but_a_lone_tile_has_no_orientation() {
+        let e = one(
+            row(&[1.0, 1.0], vec![slot("a"), slot("b")]),
+            row(&[1.0, 1.0], vec![slot("b"), slot("a")]),
+        );
+        assert_eq!((e.change, e.arrangement), (EntryChange::Changed, true));
+        let accordion = SerNode::Container {
+            orientation: Orientation::Horizontal,
+            layout: ContainerLayout::Accordion,
+            weights: vec![1.0, 1.0],
+            children: vec![slot("a"), slot("b")],
+        };
+        let e = one(row(&[1.0, 1.0], vec![slot("a"), slot("b")]), accordion);
+        assert_eq!((e.change, e.arrangement), (EntryChange::Changed, true));
+        // One tile: row or column looks the same.
+        let e = one(row(&[1.0], vec![slot("a")]), col(vec![slot("a")]));
+        assert_eq!(e.change, EntryChange::Unchanged, "{e:#?}");
+        // Empty containers left in the tree do not count either.
+        let e = one(
+            row(&[1.0, 1.0], vec![slot("a"), slot("b")]),
+            row(
+                &[1.0, 1.0, 1.0],
+                vec![slot("a"), SerNode::empty(), slot("b")],
+            ),
+        );
+        assert_eq!(e.change, EntryChange::Unchanged, "{e:#?}");
+    }
+
+    #[test]
+    fn small_size_nudges_are_not_drift() {
+        let saved = || row(&[1.0, 1.0], vec![slot("a"), slot("b")]);
+        let e = one(saved(), row(&[1.02, 0.98], vec![slot("a"), slot("b")]));
+        assert_eq!(e.change, EntryChange::Unchanged);
+        let e = one(saved(), row(&[1.1, 0.9], vec![slot("a"), slot("b")]));
+        assert_eq!((e.change, e.sizes), (EntryChange::Changed, true));
+    }
+
+    #[test]
+    fn shares_handle_missing_and_bad_weights() {
+        assert_eq!(shares(&[3.0, 1.0], 2), vec![0.75, 0.25]);
+        assert_eq!(shares(&[2.0], 2), vec![2.0 / 3.0, 1.0 / 3.0]);
+        assert_eq!(shares(&[-1.0, 1.0], 2), vec![0.0, 1.0]);
+        assert_eq!(shares(&[0.0, 0.0], 2), vec![0.5, 0.5]);
+        assert!(shares(&[], 0).is_empty());
+    }
+
+    #[test]
+    fn update_keeps_slot_details_only_for_matching_titles() {
+        let saved_docs = SerNode::Slot {
+            bundle_id: "safari".into(),
+            title: Some("^Docs".into()),
+            launch_args: vec!["--x".into()],
+        };
+        let inbox = SerNode::Slot {
+            bundle_id: "safari".into(),
+            title: Some("Inbox".into()),
+            launch_args: vec![],
+        };
+        let saved = row(&[1.0], vec![saved_docs.clone()]);
+        // A captured title that differs could be another Safari window.
+        let live = row(&[1.0, 1.0], vec![inbox.clone(), slot("safari")]);
+        assert_eq!(
+            keep_slot_details(&live, &saved),
+            row(&[1.0, 1.0], vec![inbox, saved_docs.clone()])
+        );
+        // Each saved slot is handed out once.
+        let live = row(&[1.0, 1.0], vec![slot("safari"), slot("safari")]);
+        assert_eq!(
+            keep_slot_details(&live, &saved),
+            row(&[1.0, 1.0], vec![saved_docs, slot("safari")])
+        );
+    }
 }

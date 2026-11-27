@@ -1228,6 +1228,113 @@ mod tests {
         assert_eq!(shape(&t, root), "H[]");
     }
 
+    fn weights(t: &Tree, id: NodeId) -> Vec<f64> {
+        t.container(id)
+            .unwrap()
+            .weights
+            .iter()
+            .map(|w| (w * 1000.0).round() / 1000.0)
+            .collect()
+    }
+
+    fn all(ids: &[NodeId]) -> std::collections::HashSet<NodeId> {
+        ids.iter().copied().collect()
+    }
+
+    #[test]
+    fn resize_edge_moves_only_the_neighbour_across_that_edge() {
+        let none = std::collections::HashMap::new();
+        let h = Orientation::Horizontal;
+        let (mut t, root, ids) = setup(3);
+        let present = all(&ids);
+        // Right edge of 1 by 60 of its 600 points: 1 grows, 2 gives, 3 stays.
+        assert!(t.resize_edge(ids[0], h, 60.0, 600.0, true, &present, &none));
+        assert_eq!(weights(&t, root), vec![1.1, 0.9, 1.0]);
+        // Left edge of 3 by 60: 2 gives again, 1 stays.
+        assert!(t.resize_edge(ids[2], h, 60.0, 600.0, false, &present, &none));
+        assert_eq!(weights(&t, root), vec![1.1, 0.8, 1.1]);
+        // Outer edges and the cross axis have no neighbour.
+        assert!(!t.resize_edge(ids[0], h, 60.0, 600.0, false, &present, &none));
+        assert!(!t.resize_edge(ids[2], h, 60.0, 600.0, true, &present, &none));
+        let v = Orientation::Vertical;
+        assert!(!t.resize_edge(ids[1], v, 60.0, 600.0, true, &present, &none));
+        assert_eq!(weights(&t, root), vec![1.1, 0.8, 1.1]);
+    }
+
+    #[test]
+    fn resize_edge_skips_absent_tiles_and_clamps() {
+        let none = std::collections::HashMap::new();
+        let h = Orientation::Horizontal;
+        let (mut t, root, ids) = setup(3);
+        // 2 takes no space (its window is gone): 3 is the neighbour.
+        let present = all(&[ids[0], ids[2]]);
+        assert!(t.resize_edge(ids[0], h, 90.0, 900.0, true, &present, &none));
+        assert_eq!(weights(&t, root), vec![1.1, 1.0, 0.9]);
+        // A huge drag stops at the minimum share of the present weight.
+        assert!(t.resize_edge(ids[0], h, 1e6, 900.0, true, &present, &none));
+        assert_eq!(weights(&t, root), vec![1.9, 1.0, 0.1]);
+        // Already there: nothing changes.
+        assert!(!t.resize_edge(ids[0], h, 1e6, 900.0, true, &present, &none));
+    }
+
+    #[test]
+    fn resize_edge_uses_the_nearest_split_with_a_neighbour() {
+        let none = std::collections::HashMap::new();
+        let h = Orientation::Horizontal;
+        let (mut t, root, ids) = setup(2);
+        let n3 = t.insert_leaf(
+            root,
+            w(3),
+            InsertAt::Split {
+                target: ids[1],
+                dir: Direction::Down,
+            },
+        );
+        assert_eq!(shape(&t, root), "H[1 V[2 3]]");
+        let stack = t.parent(n3).unwrap();
+        let present = all(&[ids[0], ids[1], n3]);
+        // 2's left edge is the stack's: the root split moves.
+        assert!(t.resize_edge(ids[1], h, 50.0, 500.0, false, &present, &none));
+        assert_eq!(weights(&t, root), vec![0.9, 1.1]);
+        assert_eq!(weights(&t, stack), vec![1.0, 1.0]);
+        // 2's bottom edge is shared with 3 inside the stack.
+        let v = Orientation::Vertical;
+        assert!(t.resize_edge(ids[1], v, 50.0, 500.0, true, &present, &none));
+        assert_eq!(weights(&t, stack), vec![1.1, 0.9]);
+        // Nothing right of the stack, nothing above or below 1.
+        assert!(!t.resize_edge(ids[1], h, 50.0, 500.0, true, &present, &none));
+        assert!(!t.resize_edge(ids[0], v, 50.0, 500.0, true, &present, &none));
+    }
+
+    #[test]
+    fn resize_edge_splits_by_drawn_lengths_when_known() {
+        let h = Orientation::Horizontal;
+        // Equal weights, but 1 is held at 800 of 1200 points by a minimum.
+        let (mut t, root, ids) = setup(2);
+        let present = all(&ids);
+        let frames: std::collections::HashMap<NodeId, Rect> = [
+            (ids[0], Rect::new(0.0, 0.0, 800.0, 600.0)),
+            (ids[1], Rect::new(800.0, 0.0, 400.0, 600.0)),
+        ]
+        .into_iter()
+        .collect();
+        // Dragged down to 600: the lengths now match the weights, so
+        // nothing changes (weight alone would have shrunk it).
+        assert!(!t.resize_edge(ids[0], h, -200.0, 800.0, true, &present, &frames));
+        assert_eq!(weights(&t, root), vec![1.0, 1.0]);
+        // Dragged down to 400: weights end up 400:800.
+        assert!(t.resize_edge(ids[0], h, -400.0, 800.0, true, &present, &frames));
+        let c = t.container(root).unwrap();
+        assert!((c.weights[0] / c.weights[1] - 0.5).abs() < 1e-9, "{c:?}");
+        assert!((c.weights[0] + c.weights[1] - 2.0).abs() < 1e-9);
+
+        // Without frames the drag falls back to weight per point.
+        let (mut t, root, ids) = setup(2);
+        let none = std::collections::HashMap::new();
+        assert!(t.resize_edge(ids[0], h, -200.0, 800.0, true, &all(&ids), &none));
+        assert_eq!(weights(&t, root), vec![0.75, 1.25]);
+    }
+
     #[test]
     fn insert_at_path() {
         let (mut t, root, _) = setup(2);
