@@ -8,6 +8,7 @@ version = 1
 [settings]
 inner_gap = 6                    # points between tiles
 outer_gap = 6                    # points around the edge of each display
+smart_gaps = false               # no gaps on a workspace that shows a single tile
 default_layout = "tiles"         # or "accordion"
 placement_memory_days = 30       # how long to remember where windows were
 restore_placements = true        # put relaunched windows back in their tiles
@@ -25,6 +26,7 @@ gesture_modifier = ""            # keys for gestures; empty = same as `modifier`
 border_width = 2                 # border around the focused window, points; 0 = off
 border_color = "accent"          # "accent" (system accent) or "#rrggbb" / "#rrggbbaa"
 dim_unfocused = 0                # darken unfocused windows, 0 (off) to 0.8
+master_ratio = 0.6               # width share of the large tile in `layout master-stack`, 0.1 to 0.9
 
 # Name displays. Each alias needs exactly one of: position, uuid, match_name.
 [[display]]
@@ -32,6 +34,8 @@ name = "left"
 position = "left"                # left | center | right (by arrangement)
 # uuid = "37D8832A-..."          # `pane query displays` shows UUIDs
 # match_name = "DELL U2720Q"     # substring of the display name
+# inner_gap = 0                  # optional: overrides [settings] on this display
+# outer_gap = 0                  # optional: overrides [settings] on this display
 
 # Workspaces and their display preferences (most preferred first).
 [[workspace]]
@@ -68,6 +72,29 @@ name = "term"                    # optional, for `scratchpad term`; defaults to 
 "mod-q" = "none"                 # unbind a default
 "cmd-ctrl-t" = "toggle-float"    # absolute chords work too
 ```
+
+## Gaps
+
+`inner_gap` is the space between tiles, `outer_gap` the space between the tiles and the edges of the display's visible frame (below the menu bar, beside the Dock). Both are points, 0 to 200.
+
+`inner_gap` and `outer_gap` in a `[[display]]` alias override `[settings]` on the display that alias resolves to, so a laptop screen can have none and a 4K monitor more:
+
+```toml
+[[display]]
+name = "laptop"
+match_name = "Built-in"
+inner_gap = 0
+outer_gap = 0
+
+[[display]]
+name = "4k"
+uuid = "37D8832A-..."
+outer_gap = 12                   # inner_gap stays as in [settings]
+```
+
+Each gap is overridden on its own; if several aliases resolve to the same display, the first one that sets a gap wins for that gap. Aliases whose display is not connected do nothing.
+
+With `smart_gaps = true`, a workspace that shows a single tile gets no gaps at all: the window fills the visible frame. Several windows in one accordion count as one tile. As soon as a second tile appears, the display's gaps come back.
 
 ## Hotkey layers
 
@@ -160,6 +187,10 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `focus-display next\|prev` | |
 | `move-workspace-to-display next\|prev` | |
 | `toggle-orientation`, `toggle-layout`, `toggle-float` | |
+| `balance` | give the tiles next to the focused one (its container) equal sizes |
+| `layout master-stack [PERCENT]` | one large tile on the left, the rest stacked on the right; PERCENT (10-90) is the large tile's width, default `master_ratio`. Kept as windows come and go |
+| `layout columns N` | N equal columns (1-12), each stacking its tiles. Kept as windows come and go |
+| `layout manual` | stop keeping a layout; the tiles stay where they are |
 | `toggle-fullscreen` | zoom the focused tile to fill its display; ends when another window there is focused or a new tile opens |
 | `swap-workspaces` | swap with the next display |
 | `reload`, `profile-picker`, `open-editor` | |
@@ -170,6 +201,19 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `profile-apply NAME` | |
 | `profile-when here\|off NAME` | `here`: apply NAME by itself whenever exactly the displays connected now are connected (writes its `[when]`); `off`: only by hand |
 | `recover`, `recover --all-apps` | |
+
+## Layout presets
+
+`layout master-stack` and `layout columns N` rearrange the focused workspace's tiles, in their current order, and the workspace remembers the layout (in `state.json`, so it survives a restart). Whenever the number of tiles there changes (a window opens, closes, or moves in or out), Pane rearranges them again:
+
+- **master-stack**: the first tile is the master, on the left at `master_ratio` of the width (or the percentage given); the others share a column on the right. When the master closes, the next tile takes its place. If you resize the master, it keeps that width when windows come and go.
+- **columns N**: the tiles are dealt into N equal columns, earlier columns taking one more when they don't divide evenly. With N or fewer tiles, each gets its own column.
+
+Between those changes you can still move, split and resize by hand; the next window that opens or closes puts the layout back. `layout manual` turns this off, and applying a profile to the workspace replaces the layout with the profile's own. `pane query workspaces` shows each workspace's `layout`.
+
+`balance` doesn't need a preset: it evens out the container of the focused tile (the workspace's top level when nothing is focused), leaving the other splits alone.
+
+None of these has a default shortcut. Bind them in `[shortcuts]` (for example `"mod-e" = "balance"`, `"mod-m" = "layout master-stack"`) or run them from the palette (`mod-/`, then `>layout`).
 
 ## Events (`pane subscribe`)
 

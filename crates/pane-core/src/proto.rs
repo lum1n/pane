@@ -47,6 +47,13 @@ pub enum Command {
     },
     ToggleOrientation,
     ToggleLayout,
+    /// Give the tiles of the focused container equal sizes.
+    Balance,
+    /// Arrange the focused workspace's tiles in a preset and keep that
+    /// shape as tiles come and go (`manual` stops it).
+    Layout {
+        preset: LayoutPreset,
+    },
     ToggleFloat,
     /// Zoom the focused tile to fill its display (again to restore).
     ToggleFullscreen,
@@ -120,6 +127,9 @@ pub enum Command {
         suspended: bool,
     },
     Ping,
+    /// Health report (`pane doctor`): permissions, displays, troubled apps,
+    /// the config error. Handled by the runtime.
+    Doctor,
     /// Focus a window wherever it is: show its workspace (on its display)
     /// first, and restore it if minimized.
     FocusWindow {
@@ -158,6 +168,22 @@ pub enum Command {
         #[serde(default)]
         events: Vec<EventKind>,
     },
+}
+
+/// What `layout` arranges a workspace into.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "layout", rename_all = "kebab-case")]
+pub enum LayoutPreset {
+    /// One large tile and a stacked column. `ratio` is the master's share
+    /// of the width; unset uses `[settings] master_ratio`.
+    MasterStack {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ratio: Option<f64>,
+    },
+    /// `n` equal columns.
+    Columns { n: usize },
+    /// Stop keeping a preset; the tiles stay where they are.
+    Manual,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,6 +254,47 @@ impl Command {
             "move-workspace-to-display" => Command::MoveWorkspaceToDisplay { which: cycle(1)? },
             "toggle-orientation" => Command::ToggleOrientation,
             "toggle-layout" => Command::ToggleLayout,
+            "balance" => Command::Balance,
+            "layout" => {
+                let preset = match arg(1)? {
+                    "master-stack" | "master" => LayoutPreset::MasterStack {
+                        ratio: match parts.get(2) {
+                            None => None,
+                            Some(a) => {
+                                let pct: f64 = a
+                                    .trim_end_matches('%')
+                                    .parse()
+                                    .map_err(|_| format!("`{s}`: bad master size `{a}`"))?;
+                                if !(10.0..=90.0).contains(&pct) {
+                                    return Err(format!(
+                                        "`{s}`: master size must be 10 to 90 (percent)"
+                                    ));
+                                }
+                                Some(pct / 100.0)
+                            }
+                        },
+                    },
+                    "columns" => {
+                        let n: usize = arg(2)?
+                            .parse()
+                            .map_err(|_| format!("`{s}`: bad column count"))?;
+                        if !(1..=crate::workspace::MAX_COLUMNS).contains(&n) {
+                            return Err(format!(
+                                "`{s}`: columns must be 1 to {}",
+                                crate::workspace::MAX_COLUMNS
+                            ));
+                        }
+                        LayoutPreset::Columns { n }
+                    }
+                    "manual" | "off" => LayoutPreset::Manual,
+                    a => {
+                        return Err(format!(
+                            "`{s}`: unknown layout `{a}` (master-stack, columns N, manual)"
+                        ))
+                    }
+                };
+                Command::Layout { preset }
+            }
             "toggle-float" => Command::ToggleFloat,
             "toggle-fullscreen" => Command::ToggleFullscreen,
             "swap-workspaces" => Command::SwapWorkspaces,
@@ -291,6 +358,7 @@ impl Command {
             self,
             Command::Query { .. }
                 | Command::Ping
+                | Command::Doctor
                 | Command::ProfileList
                 | Command::ProfileLoad { .. }
                 | Command::Search { .. }
@@ -463,6 +531,41 @@ mod tests {
             }
         );
         assert!(Command::parse("subscribe nonsense").is_err());
+        assert_eq!(Command::parse("balance").unwrap(), Command::Balance);
+        assert_eq!(
+            Command::parse("layout master-stack").unwrap(),
+            Command::Layout {
+                preset: LayoutPreset::MasterStack { ratio: None }
+            }
+        );
+        assert_eq!(
+            Command::parse("layout master-stack 65").unwrap(),
+            Command::Layout {
+                preset: LayoutPreset::MasterStack { ratio: Some(0.65) }
+            }
+        );
+        assert_eq!(
+            Command::parse("layout columns 3").unwrap(),
+            Command::Layout {
+                preset: LayoutPreset::Columns { n: 3 }
+            }
+        );
+        assert_eq!(
+            Command::parse("layout manual").unwrap(),
+            Command::Layout {
+                preset: LayoutPreset::Manual
+            }
+        );
+        assert!(Command::parse("layout").is_err());
+        assert!(Command::parse("layout columns").is_err());
+        assert!(Command::parse("layout columns 0").is_err());
+        assert!(Command::parse("layout master-stack 95").is_err());
+        assert!(Command::parse("layout spiral").is_err());
+        let j = serde_json::to_string(&Command::Layout {
+            preset: LayoutPreset::Columns { n: 2 },
+        })
+        .unwrap();
+        assert_eq!(j, r#"{"cmd":"layout","preset":{"layout":"columns","n":2}}"#);
         let r: Command = serde_json::from_str(r#"{"cmd":"subscribe"}"#).unwrap();
         assert_eq!(r, Command::Subscribe { events: vec![] });
         assert!(r.is_query());

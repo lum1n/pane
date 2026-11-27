@@ -19,7 +19,7 @@ The boundary is a C ABI with JSON payloads (`crates/pane-ffi/include/pane.h`). T
 | `pane-macos` | `AxElement`, observers, per-app workers, displays, CGEventTap hotkeys, recovery mirror | macOS only (empty elsewhere) |
 | `pane-agent` | Core thread, worker registry, persistence, `run.lock`, control socket, `pane-agentd` | any, via the `Platform` trait |
 | `pane-ffi` | `pane_start`, `pane_command`, `pane_event`, `pane_shutdown`, `pane_free` | staticlib |
-| `pane-cli` | `pane` | any, with offline recovery on macOS |
+| `pane-cli` | `pane` | any, with offline recovery on macOS and an offline `pane doctor` |
 
 ## Data flow
 
@@ -45,6 +45,7 @@ The core thread never touches AX. A hung app blocks only its own worker. The cor
 ## Key mechanisms
 
 - **Tree** (`tree.rs`): every workspace's root lives in one arena. Inner containers always have two or more children, and containers that end up with the same orientation as their parent are flattened. `move_leaf` implements i3 semantics: swap with a sibling, enter a sibling container, pop out of a nested container, or wrap the root. A result of `AtEdge` makes the reducer move the window to the neighbouring display.
+- **Layout presets** (`Workspace.layout`, `reducer::keep_layouts`): a workspace may keep a `LayoutMode` (master-stack with its ratio, or N columns). `reduce` counts the tiles of those workspaces before and after every event; when the count changed, the tree is rebuilt in that shape from its leaves in visual order (`Tree::arrange_master_stack`, `Tree::arrange_columns`), so ghost leaves and slots keep their places in the order. The master's width from before the event is kept, so a resize survives. Manual rearranging stays until the next change in count. Applying a profile to the workspace clears its preset.
 - **Layout** (`layout.rs`): weights are split along each container's axis, raised to learned minimum sizes, and the difference is taken from neighbours. When minimum sizes cannot fit, the newest window floats with a notice instead of being fought over.
 - **Reconcile** (`reconcile.rs`): computes desired frames for all windows (visible tiles, floats, park rects for hidden workspaces) and sends only what changed by more than 0.5 pt. Retries use backoff of 50, 150, 400, 1000 and 2500 ms. A window that keeps refusing becomes "stubborn" and floats. A window that comes back larger than asked records a minimum size and triggers a relayout. `WriteParked` always precedes the frames that park.
 - **Workspaces** (`workspace.rs`, `assign.rs`): every workspace belongs to a home display (its id is `<display UUID>/<name>`). Assignment is total and deterministic:

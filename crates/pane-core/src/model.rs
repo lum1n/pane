@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
-use crate::config::{Config, ConfigError};
+use crate::config::{Config, ConfigError, Gaps};
 use crate::display::Display;
 use crate::drop::DropTarget;
 use crate::geometry::{Rect, Size};
@@ -277,6 +277,7 @@ impl Model {
                 floating: vec![],
                 focused: ws.focused,
                 fullscreen: None,
+                layout: ws.layout,
             });
         }
         let migrate = |map: &BTreeMap<DisplayId, WorkspaceId>| -> BTreeMap<DisplayId, WorkspaceId> {
@@ -336,6 +337,7 @@ impl Model {
                         })
                         .collect(),
                     focused: w.focused,
+                    layout: w.layout,
                 })
                 .collect(),
             visible: self.visible.clone(),
@@ -424,9 +426,15 @@ impl Model {
         self.tree.find_window(self.ws(&w.workspace)?.root, wid)
     }
 
-    /// Tiling area of a display.
+    /// Gaps in effect on a display (`[settings]` with `[[display]]`
+    /// overrides).
+    pub fn gaps(&self, display: &Display) -> Gaps {
+        self.config.gaps_for(display, &self.displays)
+    }
+
+    /// Tiling area of a display: its visible frame less the outer gap.
     pub fn tiling_area(&self, display: &Display) -> Rect {
-        display.visible_frame.inset(self.config.settings.outer_gap)
+        display.visible_frame.inset(self.gaps(display).outer)
     }
 
     pub fn next_gen(&mut self) -> u64 {
@@ -478,6 +486,7 @@ impl Model {
             floating: vec![],
             focused: None,
             fullscreen: None,
+            layout: None,
         });
         id
     }

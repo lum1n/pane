@@ -81,6 +81,17 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] A bad size (`big`) shows the config error in the tab and leaves `config.toml` unchanged.
 - [ ] `pane do "summon Safari"` from another workspace moves a Safari window next to the focused tile without switching workspace; with Safari not running it opens.
 
+## Layout presets
+- [ ] Three windows on a workspace, `pane do "layout master-stack"`: the first is on the left at 60% of the width, the other two stacked on the right.
+- [ ] Open a fourth window: it joins the stack; the master keeps its width. Close the master: the next window becomes the master.
+- [ ] Widen the master with `mod-ctrl-l`, open a window: the master stays that wide.
+- [ ] `pane do "layout master-stack 70"`: the master becomes 70% wide.
+- [ ] Restart Pane: the workspace still re-shapes when a window opens. `pane query workspaces` shows its `layout`.
+- [ ] `pane do "layout columns 3"` with five windows: three equal columns (two, two, one). A sixth window makes it two, two, two.
+- [ ] `pane do "layout manual"`, open a window: it opens next to the focused tile and nothing else moves.
+- [ ] Resize a tile, then `pane do "balance"`: the tiles of that split are equal again; other splits keep their sizes.
+- [ ] Palette, `>layout`: "Layout: master and stack", "Layout: 2 columns", "Layout: 3 columns", "Layout: manual (stop re-arranging)"; `>balance`: "Balance tile sizes". Each runs.
+
 ## Event stream
 - [ ] `pane subscribe | jq -c .` in a terminal: prints `displays`, one `workspace-shown` per display, `workspaces`, `focus` and `profile` at once.
 - [ ] Switch workspace with a hotkey: a `workspace-shown` with the new `workspace` and `previous`, then `workspaces` and `focus`.
@@ -91,3 +102,12 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] `pane subscribe focus --snapshot` prints only `focus` and `snapshot` lines.
 - [ ] Ctrl-C the subscriber, then switch workspaces: Pane keeps working (no crash from SIGPIPE).
 - [ ] Quit Pane: the subscriber exits with status 0.
+
+## Doctor
+- [ ] With Pane running and permissions granted, `pane doctor` shows Accessibility and Input Monitoring for Pane (no "this terminal"), `Hotkeys: running`, the displays as in `pane query displays`, `run.lock: held by pid` Pane's pid, and exits 0.
+- [ ] Turn Pane off in Privacy & Security > Accessibility: `pane doctor` says NOT granted and exits 1.
+- [ ] `kill -STOP` an app's pid, wait for the notice: it is listed as not responding. `kill -CONT` and it goes away.
+- [ ] A window that refuses its tile (fixed-size app) is listed under its app with `refused to take its tile`.
+- [ ] Break `config.toml` (`gaps = 999`) without reloading: `Config: ERROR` with the message. Reload, fix the file, run again: "fixed on disk, but Pane still runs on defaults".
+- [ ] Quit Pane: `pane doctor` says not running, shows the terminal's permissions, the displays, and `run.lock: none`.
+- [ ] `kill -9` Pane: `run.lock: STALE` with the parked window count; starting Pane clears it.

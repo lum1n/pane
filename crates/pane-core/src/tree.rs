@@ -603,6 +603,86 @@ impl Tree {
         }
     }
 
+    /// Give every child of the container a command on `id` changes
+    /// ([`Tree::owning_container`]) the same size. Returns false when they
+    /// already had it.
+    pub fn balance(&mut self, id: NodeId) -> bool {
+        let Some(c) = self.owning_container(id) else {
+            return false;
+        };
+        let cc = self.container_mut(c).unwrap();
+        if cc.weights.iter().all(|w| (*w - 1.0).abs() < 1e-9) {
+            return false;
+        }
+        cc.weights.iter_mut().for_each(|w| *w = 1.0);
+        true
+    }
+
+    /// Rebuild `root` as one master tile on the left (share `ratio` of the
+    /// width) and the other leaves stacked in a column on the right, in
+    /// visual order.
+    pub fn arrange_master_stack(&mut self, root: NodeId, ratio: f64) {
+        let mut leaves = self.leaf_sers(root);
+        let ser = if leaves.len() <= 1 {
+            row(leaves, vec![])
+        } else {
+            let master = leaves.remove(0);
+            let stack = if leaves.len() == 1 {
+                leaves.pop().unwrap()
+            } else {
+                column(leaves)
+            };
+            row(vec![master, stack], vec![ratio, 1.0 - ratio])
+        };
+        self.fill_from_ser(root, &ser);
+    }
+
+    /// Rebuild `root` as `n` columns of equal width (fewer if there are
+    /// fewer leaves), each stacking its leaves in visual order. Earlier
+    /// columns take the leftovers.
+    pub fn arrange_columns(&mut self, root: NodeId, n: usize) {
+        let leaves = self.leaf_sers(root);
+        let cols = n.clamp(1, leaves.len().max(1));
+        let (base, extra) = (leaves.len() / cols, leaves.len() % cols);
+        let mut it = leaves.into_iter();
+        let columns: Vec<SerNode> = (0..cols)
+            .map(|i| {
+                let take = base + usize::from(i < extra);
+                let mut col: Vec<SerNode> = it.by_ref().take(take).collect();
+                if col.len() == 1 {
+                    col.pop().unwrap()
+                } else {
+                    column(col)
+                }
+            })
+            .filter(|c| !matches!(c, SerNode::Container { children, .. } if children.is_empty()))
+            .collect();
+        self.fill_from_ser(root, &row(columns, vec![]));
+    }
+
+    /// The master tile's share of the width when `root` has the shape
+    /// [`Tree::arrange_master_stack`] makes (two side-by-side tiles, the
+    /// first a leaf).
+    pub fn master_share(&self, root: NodeId) -> Option<f64> {
+        let c = self.container(root)?;
+        if c.orientation != Orientation::Horizontal
+            || c.layout != ContainerLayout::Tiles
+            || c.children.len() != 2
+            || self.leaf(c.children[0]).is_none()
+        {
+            return None;
+        }
+        let total = c.weights[0] + c.weights[1];
+        (total > 0.0).then(|| c.weights[0] / total)
+    }
+
+    fn leaf_sers(&self, root: NodeId) -> Vec<SerNode> {
+        self.leaves(root)
+            .into_iter()
+            .map(|l| self.to_ser(l))
+            .collect()
+    }
+
     /// Grow (`delta > 0`) or shrink the share of `id` along `axis` by `delta`
     /// (a fraction of the parent's length). Uses the nearest ancestor split
     /// along `axis`. Returns false when there is none.
@@ -849,6 +929,31 @@ pub enum SerNode {
     },
 }
 
+/// A horizontal tiles container; empty `weights` means equal sizes.
+fn row(children: Vec<SerNode>, weights: Vec<f64>) -> SerNode {
+    let weights = if weights.is_empty() {
+        vec![1.0; children.len()]
+    } else {
+        weights
+    };
+    SerNode::Container {
+        orientation: Orientation::Horizontal,
+        layout: ContainerLayout::Tiles,
+        weights,
+        children,
+    }
+}
+
+/// A vertical tiles container with equal sizes.
+fn column(children: Vec<SerNode>) -> SerNode {
+    SerNode::Container {
+        orientation: Orientation::Vertical,
+        layout: ContainerLayout::Tiles,
+        weights: vec![1.0; children.len()],
+        children,
+    }
+}
+
 impl SerNode {
     pub fn empty() -> Self {
         SerNode::Container {
@@ -1049,6 +1154,46 @@ mod tests {
         );
         t.toggle_orientation(ids[0]);
         assert_eq!(shape(&t, root), "V[1 2 3]");
+    }
+
+    #[test]
+    fn balance_equalizes_the_focused_container() {
+        let (mut t, root, ids) = setup(3);
+        t.resize(ids[0], Orientation::Horizontal, 0.2);
+        assert!(t.balance(ids[1]));
+        assert_eq!(t.container(root).unwrap().weights, vec![1.0; 3]);
+        assert!(!t.balance(ids[1]));
+    }
+
+    #[test]
+    fn master_stack_and_columns() {
+        let (mut t, root, _) = setup(1);
+        t.arrange_master_stack(root, 0.6);
+        assert_eq!(shape(&t, root), "H[1]");
+        t.insert_leaf(root, w(2), InsertAt::End);
+        t.arrange_master_stack(root, 0.6);
+        assert_eq!(shape(&t, root), "H[1 2]");
+        assert!((t.master_share(root).unwrap() - 0.6).abs() < 1e-9);
+        t.insert_leaf(root, w(3), InsertAt::End);
+        t.insert_leaf(root, w(4), InsertAt::End);
+        t.arrange_master_stack(root, 0.7);
+        assert_eq!(shape(&t, root), "H[1 V[2 3 4]]");
+        assert!((t.master_share(root).unwrap() - 0.7).abs() < 1e-9);
+
+        t.insert_leaf(root, w(5), InsertAt::End);
+        t.arrange_columns(root, 3);
+        assert_eq!(shape(&t, root), "H[V[1 2] V[3 4] 5]");
+        assert_eq!(t.container(root).unwrap().weights, vec![1.0; 3]);
+        assert_eq!(t.master_share(root), None);
+        t.arrange_columns(root, 8);
+        assert_eq!(shape(&t, root), "H[1 2 3 4 5]");
+        t.arrange_columns(root, 1);
+        assert_eq!(shape(&t, root), "V[1 2 3 4 5]");
+
+        let (mut t, root, _) = setup(0);
+        t.arrange_columns(root, 2);
+        t.arrange_master_stack(root, 0.5);
+        assert_eq!(shape(&t, root), "H[]");
     }
 
     #[test]
