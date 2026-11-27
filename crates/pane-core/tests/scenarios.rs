@@ -1937,6 +1937,49 @@ fn summon_brings_a_window_here() {
     assert_eq!(s.launches, vec!["com.example.c".to_string()]);
 }
 
+#[test]
+fn workspace_names_show_in_snapshot_and_palette() {
+    let cfg = Config::parse(
+        "[workspace_names]\n\"1\" = \"web\"\n\"right:1\" = \"chat\"\n\"uuid:L:2\" = \"mail\"\n",
+    )
+    .unwrap();
+    let mut s = Sim::with(Model::new(cfg, 1_000_000));
+    s.launch(100, "com.apple.Safari");
+    s.window(100, 1, "News", CENTER);
+    s.focus(100, 1);
+    let snap = pane_core::snapshot::build(&s.m);
+    let title = |d: &str| {
+        snap.displays
+            .iter()
+            .find(|x| x.id == d)
+            .and_then(|x| x.visible_workspace_title.clone())
+    };
+    assert_eq!(title("C").as_deref(), Some("web"));
+    assert_eq!(title("L").as_deref(), Some("web"));
+    assert_eq!(title("R").as_deref(), Some("chat"), "DISPLAY:NAME wins");
+    let ws = |id: &str| snap.workspaces.iter().find(|w| w.id == id).unwrap();
+    assert_eq!(ws("R/1").title.as_deref(), Some("chat"));
+    assert!(snap.appearance.app_icons);
+
+    // L's workspace 2 is named by UUID.
+    s.cmd(Command::Workspace {
+        name: "left:2".into(),
+    });
+    let snap = pane_core::snapshot::build(&s.m);
+    let l = snap.displays.iter().find(|x| x.id == "L").unwrap();
+    assert_eq!(l.visible_workspace.as_deref(), Some("2"));
+    assert_eq!(l.visible_workspace_title.as_deref(), Some("mail"));
+
+    let items = pane_core::palette::search(&s.m, "chat", &[]);
+    assert_eq!(items[0].title, "Workspace 1 · chat");
+    let items = pane_core::palette::search(&s.m, "news", &[]);
+    assert!(
+        items[0].subtitle.contains("workspace 1 (web)"),
+        "{}",
+        items[0].subtitle
+    );
+}
+
 fn layout(s: &mut Sim, text: &str) {
     let c = Command::parse(text).unwrap();
     assert!(matches!(s.cmd(c), Reply::Ok { .. }), "{text}");

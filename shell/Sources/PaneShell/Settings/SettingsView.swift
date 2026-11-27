@@ -24,6 +24,7 @@ struct PaneSettings: Codable, Equatable {
     var border_width: Double
     var border_color: String
     var dim_unfocused: Double
+    var menu_bar_app_icons: Bool?
 }
 
 private struct ConfigReply: Codable {
@@ -332,6 +333,15 @@ private struct GeneralSettingsView: View {
                     }
                     .onAppear { dim = s.dim_unfocused }
                     .onChange(of: s.dim_unfocused) { _, v in dim = v }
+                }
+                Section("Menu bar") {
+                    Toggle("Show app icons on the tiles", isOn: Binding(
+                        get: { model.settings?.menu_bar_app_icons ?? true },
+                        set: { model.set("menu_bar_app_icons", $0) }
+                    ))
+                    Text("Click a tile in the menu bar icon to focus its window. Name workspaces in config.toml under [workspace_names].")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section("Behaviour") {
                     Toggle("Put relaunched windows back in their tiles", isOn: toggle("restore_placements") { $0.restore_placements })

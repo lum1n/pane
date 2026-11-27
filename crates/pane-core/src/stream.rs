@@ -84,6 +84,9 @@ pub enum StreamEvent {
         display: String,
         display_name: String,
         workspace: Option<String>,
+        /// The workspace's `[workspace_names]` name, if it has one.
+        #[serde(default)]
+        workspace_title: Option<String>,
         previous: Option<String>,
     },
     Workspaces {
@@ -130,11 +133,14 @@ pub fn diff(prev: Option<&Snapshot>, next: &Snapshot, kinds: &[EventKind]) -> Ve
         for d in &next.displays {
             let before = prev.and_then(|p| p.displays.iter().find(|x| x.id == d.id));
             match before {
-                Some(b) if b.visible_workspace == d.visible_workspace => {}
+                Some(b)
+                    if b.visible_workspace == d.visible_workspace
+                        && b.visible_workspace_title == d.visible_workspace_title => {}
                 _ => out.push(StreamEvent::WorkspaceShown {
                     display: d.id.clone(),
                     display_name: d.name.clone(),
                     workspace: d.visible_workspace.clone(),
+                    workspace_title: d.visible_workspace_title.clone(),
                     previous: before.and_then(|b| b.visible_workspace.clone()),
                 }),
             }
@@ -239,6 +245,7 @@ mod tests {
             is_main: id == "A",
             rank: 0,
             visible_workspace: Some(ws.into()),
+            visible_workspace_title: None,
             focused,
             tiles,
         }
@@ -252,6 +259,7 @@ mod tests {
             home: display.into(),
             guest: false,
             label: name.into(),
+            title: None,
             target: format!("uuid:{display}:{name}"),
             visible,
             windows: 1,
@@ -321,6 +329,7 @@ mod tests {
                 display: "A".into(),
                 display_name: "Screen A".into(),
                 workspace: Some("1".into()),
+                workspace_title: None,
                 previous: None,
             }
         );
@@ -399,6 +408,7 @@ mod tests {
                     display: "B".into(),
                     display_name: "Screen B".into(),
                     workspace: Some("3".into()),
+                    workspace_title: None,
                     previous: Some("1".into()),
                 },
                 StreamEvent::Workspaces {
@@ -426,6 +436,26 @@ mod tests {
         };
         assert_eq!(displays.len(), 1);
         assert_eq!(focused.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn workspace_renamed() {
+        let a = base();
+        let mut b = base();
+        b.displays[0].visible_workspace_title = Some("web".into());
+        b.workspaces[0].title = Some("web".into());
+        let evs = diff(Some(&a), &b, &[]);
+        assert_eq!(
+            kinds(&evs),
+            vec![EventKind::WorkspaceShown, EventKind::Workspaces]
+        );
+        let StreamEvent::WorkspaceShown {
+            workspace_title, ..
+        } = &evs[0]
+        else {
+            panic!()
+        };
+        assert_eq!(workspace_title.as_deref(), Some("web"));
     }
 
     #[test]

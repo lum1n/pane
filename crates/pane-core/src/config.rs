@@ -30,6 +30,11 @@ pub struct Config {
     /// Apps summoned and dismissed with one key, as a centered float.
     #[serde(default, rename = "scratchpad")]
     pub scratchpads: Vec<ScratchpadConfig>,
+    /// Workspace -> name shown in the menu bar icon, the menu and the
+    /// palette. Keys are a workspace (`"1"`, on every display) or
+    /// `DISPLAY:WORKSPACE` (`"right:3"`), which wins.
+    #[serde(default)]
+    pub workspace_names: BTreeMap<String, String>,
     /// Chord -> command, merged over the defaults. `"none"` unbinds.
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
@@ -83,6 +88,8 @@ pub struct Settings {
     pub border_color: String,
     /// How much to darken windows that do not have focus (0 = off, 0.8 max).
     pub dim_unfocused: f64,
+    /// Draw each window's app icon on its tile in the menu bar icon.
+    pub menu_bar_app_icons: bool,
     /// Share of the width `layout master-stack` gives the master tile
     /// (0.1 to 0.9).
     pub master_ratio: f64,
@@ -117,6 +124,7 @@ impl Default for Settings {
             border_width: 2.0,
             border_color: "accent".into(),
             dim_unfocused: 0.0,
+            menu_bar_app_icons: true,
             master_ratio: 0.6,
         }
     }
@@ -695,6 +703,7 @@ impl Default for Config {
             workspaces: vec![],
             rules: vec![],
             scratchpads: vec![],
+            workspace_names: BTreeMap::new(),
             shortcuts: BTreeMap::new(),
         }
     }
@@ -787,6 +796,20 @@ impl Config {
             names.push(name);
             if let Some(size) = &sp.size {
                 parse_size(size).map_err(|e| ConfigError::plain(format!("{what}: {e}")))?;
+            }
+        }
+        for (key, title) in &self.workspace_names {
+            let ws = key.rsplit_once(':').map_or(key.as_str(), |(_, w)| w);
+            if !crate::workspace::valid_name(ws) || key.starts_with(':') {
+                return Err(ConfigError::plain(format!(
+                    "[workspace_names] `{key}`: expected a workspace like \"3\" or \"right:3\""
+                )));
+            }
+            let t = title.trim();
+            if t.is_empty() || t.chars().count() > 32 {
+                return Err(ConfigError::plain(format!(
+                    "[workspace_names] `{key}`: names are 1 to 32 characters"
+                )));
             }
         }
         self.compiled_rules()?;
@@ -1072,6 +1095,8 @@ border_width = 2
 border_color = "accent"
 dim_unfocused = 0
 
+# Draw each window's app icon on its tile in the menu bar icon.
+menu_bar_app_icons = true
 # Width share of the large tile in `layout master-stack` (0.1 to 0.9).
 master_ratio = 0.6
 
@@ -1098,6 +1123,12 @@ position = "right"
 
 # Every display has its own workspaces 1-9: mod-N shows workspace N on the
 # display you are working on.
+
+# Optional names, shown in the menu bar icon, the menu and the palette.
+# "DISPLAY:N" names workspace N of one display only and wins over "N".
+# [workspace_names]
+# "1" = "web"
+# "right:3" = "chat"
 
 # A scratchpad: one key shows the app's window as a centered float on the
 # display you are working on (opening the app if needed); again hides it.
@@ -1141,6 +1172,21 @@ mod tests {
             Config::parse("[[workspace]]\nname = \"1\"\ndisplay = [\"left\", \"main\"]\n").is_ok()
         );
         assert!(c.bindings().unwrap().len() > 30);
+    }
+
+    #[test]
+    fn workspace_names_validated() {
+        let c =
+            Config::parse("[workspace_names]\n\"1\" = \"web\"\n\"right:3\" = \"chat\"\n").unwrap();
+        assert_eq!(c.workspace_names.len(), 2);
+        assert!(Config::parse("[workspace_names]\n\"1\" = \" \"\n").is_err());
+        assert!(Config::parse("[workspace_names]\n\"left:\" = \"x\"\n").is_err());
+        assert!(Config::parse("[workspace_names]\n\":2\" = \"x\"\n").is_err());
+        assert!(Config::parse(&format!(
+            "[workspace_names]\n\"2\" = \"{}\"\n",
+            "x".repeat(33)
+        ))
+        .is_err());
     }
 
     #[test]

@@ -74,6 +74,14 @@ You can also manage scratchpads in **Settings → Scratchpads**, toggle them fro
 
 Profiles can follow your displays. Apply a profile, then choose **Apply “NAME” on These Displays Automatically** in the menu's Profiles submenu (or run `pane profile auto NAME`). From then on, Pane applies that profile by itself whenever exactly those displays are connected. Plug in at the office and get the office layout; unplug and get the laptop one. It waits until the displays have settled for 5 seconds. A profile you pick by hand stays until the displays change. See [docs/config.md](docs/config.md#profiles-that-follow-the-displays).
 
+The menu bar icon draws your desk: each display, the visible workspace's tiles with their app icons, and the name of the workspace you are on if you gave it one. Click a window's tile to focus it; click anywhere else (or right-click) for the menu. Name workspaces in `config.toml`, shown in the icon, the menu and the palette:
+
+```toml
+[workspace_names]
+"1" = "web"
+"right:3" = "chat"     # only workspace 3 of the right display
+```
+
 Layout presets arrange a workspace for you. `layout master-stack` puts one large tile on the left (60% wide, `master_ratio`) and stacks the rest on the right; `layout columns 3` deals the tiles into three equal columns. The workspace keeps that shape as windows open and close, until `layout manual`. `balance` gives the tiles of the focused container equal sizes again. Run them from the palette (`>layout`, `>balance`) or bind them in `[shortcuts]`. See [docs/config.md](docs/config.md#layout-presets).
 
 The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).

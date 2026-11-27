@@ -182,8 +182,12 @@ fn window_items(m: &Model) -> Vec<(PaletteItem, u64)> {
             };
             let mut sub = vec![app];
             if let Some(ws) = m.ws(&w.workspace) {
+                let named = m
+                    .workspace_title(ws)
+                    .map(|t| format!(" ({t})"))
+                    .unwrap_or_default();
                 sub.push(format!(
-                    "{} · workspace {}",
+                    "{} · workspace {}{named}",
                     display_name(m, &ws.display),
                     ws.name
                 ));
@@ -223,7 +227,10 @@ fn workspace_items(m: &Model) -> Vec<PaletteItem> {
             };
             PaletteItem {
                 kind: ItemKind::Workspace,
-                title: format!("Workspace {}", w.label),
+                title: match &w.title {
+                    Some(t) => format!("Workspace {} · {t}", w.label),
+                    None => format!("Workspace {}", w.label),
+                },
                 subtitle: format!("{} · {windows}", display_name(m, &w.display)),
                 bundle_id: None,
                 shortcut: None,
