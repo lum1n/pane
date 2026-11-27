@@ -126,6 +126,13 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Set `CFBundleShortVersionString` in the built app's Info.plist below the latest release tag (or `defaults delete com.vegard.pane lastUpdateCheck` with an older build) and relaunch: a notice says the new version is available once, the menu starts with "Pane X Is Available…", and that item opens the release page.
 - [ ] Untick **Check for updates automatically**: no check at launch (`defaults read com.vegard.pane checkForUpdates` is 0).
 
+## Title-bar drag
+- [ ] Drag a tiled window by its title bar (no modifier) over the middle of another tile: the outline appears; let go and the two swap. `mod-z` swaps them back.
+- [ ] Drag near an edge of another tile, to a screen edge, and onto another display: the outline matches where the window lands on release each time.
+- [ ] Pause for a few seconds mid-drag with the button held: the window does not jump back to its tile.
+- [ ] Drag out and back over the window's own tile and let go: the outline goes away and the window returns to its tile.
+- [ ] Untick **Move tiled windows by dragging their title bar** in Settings > Shortcuts: a dragged tile snaps back with no outline, without restarting. Dragging a floating window still just moves it. Resizing by an edge still works.
+
 ## Mouse follows focus, focus follows mouse
 - [ ] With `mouse_follows_focus = true`, `mod-l` to the next tile puts the pointer in its middle; `mod-l` onto the next display (also an empty one) moves the pointer there. The pointer does not stutter after a warp.
 - [ ] The pointer already over the window you focus does not move. Clicking a window or Cmd-Tab never moves the pointer.

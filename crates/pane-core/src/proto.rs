@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::ScratchpadConfig;
 use crate::geometry::{Direction, Orientation, Point, Rect};
-use crate::gesture::GesturePhase;
+use crate::gesture::{DragPhase, GesturePhase};
 use crate::profile::{Profile, ProfileEdit};
 use crate::stream::EventKind;
 use crate::workspace::Cycle;
@@ -179,6 +179,11 @@ pub enum Command {
     /// mouse). Not in the text form.
     Hover {
         at: Point,
+    },
+    /// The pointer with the left button held, and its release (title-bar
+    /// drag of a tiled window). Not in the text form.
+    Drag {
+        phase: DragPhase,
     },
     /// Stream events (`stream::StreamEvent`) as JSON lines after the
     /// `{"status":"ok"}` reply. Only works over the control socket. An empty

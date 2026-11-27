@@ -54,8 +54,12 @@ struct ShortcutsPane: View {
                         get: { model.settings?.gestures ?? true },
                         set: { model.set("gestures", $0) }
                     ))
+                    Toggle("Move tiled windows by dragging their title bar", isOn: Binding(
+                        get: { model.settings?.title_drag ?? true },
+                        set: { model.set("title_drag", $0) }
+                    ))
                 } footer: {
-                    Text("Every default shortcut uses the modifier. Moving adds ⇧ and resizing adds ⌃ (or the next key not already in the modifier). To move by pointing, hold the modifier over a window and point at another tile, its edge, a screen edge or another display, then release. Esc cancels.")
+                    Text("Every default shortcut uses the modifier. Moving adds ⇧ and resizing adds ⌃ (or the next key not already in the modifier). To move by pointing, hold the modifier over a window and point at another tile, its edge, a screen edge or another display, then release. Esc cancels. Dragging a tiled window's title bar shows the same outline; let go over its own tile and it goes back.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -63,7 +67,7 @@ struct ShortcutsPane: View {
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
-            .frame(height: 190)
+            .frame(height: 230)
 
             HStack {
                 SearchField(text: $query, prompt: "Search shortcuts")

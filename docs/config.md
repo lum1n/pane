@@ -28,6 +28,7 @@ border_color = "accent"          # "accent" (system accent) or "#rrggbb" / "#rrg
 dim_unfocused = 0                # darken unfocused windows, 0 (off) to 0.8
 mouse_follows_focus = false      # move the pointer to the window you focus from the keyboard
 focus_follows_mouse = false      # focus the window the pointer rests over (150 ms)
+title_drag = true                # drag a tiled window's title bar to swap/split/move it; off: it snaps back
 menu_bar_app_icons = true        # app icons on the tiles of the menu bar icon
 master_ratio = 0.6               # width share of the large tile in `layout master-stack`, 0.1 to 0.9
 

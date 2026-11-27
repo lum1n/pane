@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::config::{Config, ConfigError, Gaps};
 use crate::display::Display;
 use crate::drop::DropTarget;
-use crate::geometry::{Rect, Size};
+use crate::geometry::{Point, Rect, Size};
 use crate::identity::PlacementRecord;
 use crate::rules::{Rule, WindowRole};
 use crate::state::{FloatingState, ParkedEntry, State, WorkspaceState, STATE_VERSION};
@@ -83,6 +83,9 @@ pub struct Gesture {
     pub wid: WindowId,
     /// Where it would go if dropped now (what the overlay shows).
     pub target: Option<DropTarget>,
+    /// A plain title-bar drag (left button, no modifier) rather than the
+    /// modifier gesture; it ends on `DragPhase::Release`.
+    pub plain: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -147,6 +150,9 @@ pub struct Model {
     pub drags: BTreeMap<WindowId, (Rect, u64)>,
     /// The gesture in progress (runtime only, not persisted).
     pub gesture: Option<Gesture>,
+    /// Where the pointer was last seen with the left button held, and when
+    /// (runtime only).
+    pub pointer: Option<(Point, u64)>,
     /// Focus follows mouse: the window the pointer rests over and when to
     /// focus it (runtime only).
     pub hover: Option<(WindowId, u64)>,
@@ -215,6 +221,7 @@ impl Model {
             last_sent: BTreeMap::new(),
             drags: BTreeMap::new(),
             gesture: None,
+            pointer: None,
             hover: None,
             desired: BTreeMap::new(),
             slot_frames: vec![],
@@ -616,6 +623,9 @@ impl Model {
         t.extend(self.drags.values().map(|d| d.1));
         t.extend(self.resync_at);
         t.extend(self.hover.map(|h| h.1));
+        if self.gesture.as_ref().is_some_and(|g| g.plain) {
+            t.extend(self.pointer.map(|p| p.1 + crate::reducer::DRAG_LOST_MS));
+        }
         if !self.windows.is_empty() {
             t.push(self.next_watchdog_ms.max(self.now_ms));
         }

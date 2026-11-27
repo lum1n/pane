@@ -11,7 +11,7 @@ use crate::drop::{self, DropTarget, Source};
 use crate::effect::Effect;
 use crate::event::{Event, WindowProbe};
 use crate::geometry::{neighbor_in_direction, Direction, Orientation, Point, Rect};
-use crate::gesture::GesturePhase;
+use crate::gesture::{DragPhase, GesturePhase};
 use crate::identity::{match_windows, PlacementRecord, WindowFingerprint};
 use crate::model::{
     AppInfo, Gesture, Model, PendingLaunch, PendingSlot, WindowInfo, WindowMode,
@@ -35,12 +35,18 @@ pub const HOVER_FOCUS_MS: u64 = 150;
 /// A tiled window must change size by more than this (points) to count as
 /// an edge drag rather than rounding noise.
 const DRAG_THRESHOLD: f64 = 3.0;
+/// A title-bar drag starts only if the pointer was seen with the button
+/// held this recently (ms); otherwise the move came from something else.
+const POINTER_FRESH_MS: u64 = 500;
+/// A title-bar drag with no pointer news for this long (a lost mouse-up)
+/// is given up and the window snaps back.
+pub const DRAG_LOST_MS: u64 = 5_000;
 
 pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
     // Focus moved by the user through Pane (hotkeys, palette, CLI), not by
     // the pointer or the OS.
     let keyboard = matches!(&ev, Event::Command { cmd, .. }
-        if !cmd.is_query() && !matches!(cmd, Command::Gesture { .. } | Command::Hover { .. }));
+        if !cmd.is_query() && !matches!(cmd, Command::Gesture { .. } | Command::Hover { .. } | Command::Drag { .. }));
     if keyboard {
         // A pending hover must not undo what the user just chose.
         m.hover = None;
@@ -1250,6 +1256,8 @@ fn frame_changed(m: &mut Model, wid: WindowId, frame: Rect, fx: &mut Vec<Effect>
                         m.drags.insert(wid, (frame, m.now_ms + SNAP_BACK_MS));
                     } else if let Some(d) = m.drags.get_mut(&wid) {
                         *d = (frame, m.now_ms + SNAP_BACK_MS);
+                    } else if title_drag(m, wid, old, frame, fx) {
+                        return;
                     }
                 }
             }
@@ -1518,6 +1526,13 @@ fn commit_drag(m: &mut Model, wid: WindowId, frame: Rect) {
 
 fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
     let now = m.now_ms;
+    // A title-bar drag whose mouse-up never came.
+    if m.gesture.as_ref().is_some_and(|g| g.plain)
+        && m.pointer.is_none_or(|p| now >= p.1 + DRAG_LOST_MS)
+    {
+        m.pointer = None;
+        cancel_gesture(m, fx);
+    }
     // Finished edge drags become the new layout.
     let due: Vec<(WindowId, Rect)> = m
         .drags
@@ -1599,9 +1614,12 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
     // Second pass after display changes / wake: resend frames that drifted.
     if m.resync_at.is_some_and(|t| now >= t) {
         m.resync_at = None;
+        // The window held in a title-bar drag is meant to be off its tile.
+        let held = m.gesture.as_ref().filter(|g| g.plain).map(|g| g.wid);
         let drifted: Vec<WindowId> = m
             .last_sent
             .iter()
+            .filter(|(w, _)| Some(**w) != held)
             .filter(|(w, s)| {
                 m.windows
                     .get(w)
@@ -1775,6 +1793,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         Command::Subscribe { .. } => Reply::err("subscribe works only over the control socket"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
         Command::Hover { at } => cmd_hover(m, at),
+        Command::Drag { phase } => cmd_drag(m, phase, fx),
         Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
         Command::Scratchpad { name } => cmd_scratchpad(m, &name, fx),
         Command::Summon { app } => cmd_summon(m, &app, fx),
@@ -2851,9 +2870,88 @@ pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply 
 // ---------------------------------------------------------------- gestures
 
 fn cancel_gesture(m: &mut Model, fx: &mut Vec<Effect>) {
-    if m.gesture.take().is_some() {
+    if let Some(g) = m.gesture.take() {
         fx.push(Effect::UiRequest(UiRequest::GestureOverlayHide));
+        if g.plain {
+            snap_back_now(m, g.wid);
+        }
     }
+}
+
+/// Send `wid` back to its tile right away.
+fn snap_back_now(m: &mut Model, wid: WindowId) {
+    if let Some(s) = m.last_sent.get_mut(&wid) {
+        s.settled = false;
+        s.next_retry_ms = Some(m.now_ms);
+    }
+}
+
+/// A visible tiled window moved without changing size (from `old`, the
+/// frame Pane gave it, to `frame`). If the user is dragging it by the title
+/// bar (the left button is held), start or continue a plain drag: show
+/// where it would land and hold its snap-back until the button goes up.
+/// Returns false to fall back to the snap-back.
+fn title_drag(m: &mut Model, wid: WindowId, old: Rect, frame: Rect, fx: &mut Vec<Effect>) -> bool {
+    if !m.config.settings.title_drag
+        || (frame.x - old.x).abs().max((frame.y - old.y).abs()) <= DRAG_THRESHOLD
+    {
+        return false;
+    }
+    let Some((at, seen)) = m.pointer else {
+        return false;
+    };
+    match &m.gesture {
+        Some(g) if g.plain && g.wid == wid => {}
+        Some(_) => return false,
+        None => {
+            if m.now_ms.saturating_sub(seen) > POINTER_FRESH_MS {
+                return false;
+            }
+            m.hover = None;
+            m.gesture = Some(Gesture {
+                wid,
+                target: None,
+                plain: true,
+            });
+            gesture_move(m, at, fx);
+        }
+    }
+    if let Some(s) = m.last_sent.get_mut(&wid) {
+        s.settled = false;
+        s.next_retry_ms = None;
+    }
+    true
+}
+
+fn cmd_drag(m: &mut Model, phase: DragPhase, fx: &mut Vec<Effect>) -> Reply {
+    let plain = m.gesture.as_ref().is_some_and(|g| g.plain);
+    match phase {
+        DragPhase::Move { at } => {
+            m.pointer = Some((at, m.now_ms));
+            if plain {
+                gesture_move(m, at, fx);
+            }
+        }
+        DragPhase::Release { at } => {
+            m.pointer = None;
+            if !plain {
+                return Reply::ok();
+            }
+            let g = m.gesture.take().expect("plain drag");
+            fx.push(Effect::UiRequest(UiRequest::GestureOverlayHide));
+            if !m.windows.contains_key(&g.wid) {
+                return Reply::ok();
+            }
+            if let Some(t) = drop::target_at(m, g.wid, at) {
+                let before = undo::capture(m);
+                drop_window(m, g.wid, &t, fx);
+                undo::record(m, before);
+            }
+            // Dropped or not, the window goes to its (maybe new) tile.
+            snap_back_now(m, g.wid);
+        }
+    }
+    Reply::ok()
 }
 
 /// The window drawn at `at` on a visible workspace: floats first (the
@@ -2909,11 +3007,18 @@ fn cmd_hover(m: &mut Model, at: Point) -> Reply {
 }
 
 fn cmd_gesture(m: &mut Model, phase: GesturePhase, fx: &mut Vec<Effect>) -> Reply {
+    if m.gesture.as_ref().is_some_and(|g| g.plain) {
+        return Reply::ok(); // The title-bar drag owns the pointer.
+    }
     match phase {
         GesturePhase::Begin { at, pointer } => {
             cancel_gesture(m, fx);
             if let Some(wid) = window_at(m, at) {
-                m.gesture = Some(Gesture { wid, target: None });
+                m.gesture = Some(Gesture {
+                    wid,
+                    target: None,
+                    plain: false,
+                });
                 gesture_move(m, pointer, fx);
             }
         }
@@ -2949,8 +3054,8 @@ fn gesture_move(m: &mut Model, at: Point, fx: &mut Vec<Effect>) {
         .as_ref()
         .and_then(|t| drop::preview(m, g.wid, t).map(|p| (p, drop::label(m, t))));
     m.gesture = Some(Gesture {
-        wid: g.wid,
         target: target.filter(|_| shown.is_some()),
+        ..g
     });
     fx.push(Effect::UiRequest(match shown {
         Some(((frame, target), label)) => UiRequest::GestureOverlay {

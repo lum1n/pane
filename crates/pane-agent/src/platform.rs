@@ -27,6 +27,9 @@ pub trait HotkeyHandle: Send {
     fn set_suspended(&self, suspended: bool);
     /// Report pointer moves as `Command::Hover` (focus follows mouse).
     fn set_hover(&self, _on: bool) {}
+    /// Report left-button drags and releases as `Command::Drag` (title-bar
+    /// drag of a tiled window).
+    fn set_drag(&self, _on: bool) {}
 }
 
 pub trait Platform: Send + Sync + 'static {
@@ -141,6 +144,9 @@ pub mod mac {
         }
         fn set_hover(&self, on: bool) {
             self.0.set_hover(on)
+        }
+        fn set_drag(&self, on: bool) {
+            self.0.set_drag(on)
         }
     }
 

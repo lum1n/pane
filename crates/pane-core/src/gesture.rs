@@ -46,6 +46,18 @@ pub enum GesturePhase {
     Cancel,
 }
 
+/// The left mouse button with no modifier gesture: where the pointer is
+/// while the button is held, and where it was let go. With these the core
+/// turns a title-bar drag of a tiled window into a drop.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DragPhase {
+    /// The pointer moved with the left button down.
+    Move { at: Point },
+    /// The left button went up at `at`.
+    Release { at: Point },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyVerdict {
     Pass,
@@ -372,5 +384,7 @@ mod tests {
     fn wire_format() {
         let j = serde_json::to_string(&GesturePhase::Drop { at: p(1.0, 2.0) }).unwrap();
         assert_eq!(j, r#"{"type":"drop","at":{"x":1.0,"y":2.0}}"#);
+        let j = serde_json::to_string(&DragPhase::Release { at: p(1.0, 2.0) }).unwrap();
+        assert_eq!(j, r#"{"type":"release","at":{"x":1.0,"y":2.0}}"#);
     }
 }

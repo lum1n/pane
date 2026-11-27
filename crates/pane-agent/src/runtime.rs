@@ -489,7 +489,7 @@ impl Core {
         let hover = matches!(
             &e,
             Event::Command {
-                cmd: Command::Hover { .. },
+                cmd: Command::Hover { .. } | Command::Drag { .. },
                 ..
             }
         );
@@ -592,6 +592,7 @@ impl Core {
         match self.platform.start_hotkeys(&bindings, gesture, tx) {
             Ok(h) => {
                 h.set_hover(self.m.config.settings.focus_follows_mouse);
+                h.set_drag(self.m.config.settings.title_drag);
                 self.hotkeys = Some(h);
             }
             Err(e) => {
@@ -899,12 +900,14 @@ impl Core {
                     let bindings = c.bindings().unwrap_or_default();
                     let gesture = c.gesture_mods().ok().flatten();
                     let hover = c.settings.focus_follows_mouse;
+                    let drag = c.settings.title_drag;
                     self.reduce(Event::ConfigLoaded {
                         config: Box::new(c),
                     });
                     if let Some(h) = &self.hotkeys {
                         h.update(&bindings, gesture);
                         h.set_hover(hover);
+                        h.set_drag(drag);
                     }
                     Reply::ok()
                 }
