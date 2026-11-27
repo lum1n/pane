@@ -1,10 +1,10 @@
 //! The whole window-manager state owned by the core thread.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::Serialize;
 
-use crate::config::{Config, ConfigError};
+use crate::config::{Config, ConfigError, Gaps};
 use crate::display::Display;
 use crate::drop::DropTarget;
 use crate::geometry::{Rect, Size};
@@ -173,6 +173,9 @@ pub struct Model {
     pub auto_topology: Option<String>,
     /// Floating windows from `state.json` waiting to be rediscovered.
     pub expected_floating: BTreeMap<WindowId, (WorkspaceId, Option<Rect>)>,
+    /// Layouts from before the last tree-changing commands, oldest first
+    /// (at most `undo::UNDO_DEPTH`; runtime only, not persisted).
+    pub undo: VecDeque<crate::undo::LayoutState>,
     pub now_ms: u64,
     pub gen: u64,
     pub seq: u64,
@@ -226,6 +229,7 @@ impl Model {
             expected_floating: BTreeMap::new(),
             active_profile: None,
             auto_topology: None,
+            undo: VecDeque::new(),
             now_ms,
             gen: 0,
             seq: 0,
@@ -281,6 +285,7 @@ impl Model {
                 floating: vec![],
                 focused: ws.focused,
                 fullscreen: None,
+                layout: ws.layout,
             });
         }
         let migrate = |map: &BTreeMap<DisplayId, WorkspaceId>| -> BTreeMap<DisplayId, WorkspaceId> {
@@ -340,6 +345,7 @@ impl Model {
                         })
                         .collect(),
                     focused: w.focused,
+                    layout: w.layout,
                 })
                 .collect(),
             visible: self.visible.clone(),
@@ -428,9 +434,15 @@ impl Model {
         self.tree.find_window(self.ws(&w.workspace)?.root, wid)
     }
 
-    /// Tiling area of a display.
+    /// Gaps in effect on a display (`[settings]` with `[[display]]`
+    /// overrides).
+    pub fn gaps(&self, display: &Display) -> Gaps {
+        self.config.gaps_for(display, &self.displays)
+    }
+
+    /// Tiling area of a display: its visible frame less the outer gap.
     pub fn tiling_area(&self, display: &Display) -> Rect {
-        display.visible_frame.inset(self.config.settings.outer_gap)
+        display.visible_frame.inset(self.gaps(display).outer)
     }
 
     pub fn next_gen(&mut self) -> u64 {
@@ -482,6 +494,7 @@ impl Model {
             floating: vec![],
             focused: None,
             fullscreen: None,
+            layout: None,
         });
         id
     }
@@ -526,6 +539,37 @@ impl Model {
             }
             _ => Some((self.focused_display()?, target.to_string())),
         }
+    }
+
+    /// The `[workspace_names]` name of a workspace, if it has one. A
+    /// `DISPLAY:NAME` key for its home display wins over a plain `NAME`.
+    pub fn workspace_title(&self, w: &Workspace) -> Option<String> {
+        let names = &self.config.workspace_names;
+        if names.is_empty() {
+            return None;
+        }
+        let scoped = names.iter().find(|(key, _)| {
+            let Some((d, name)) = key.rsplit_once(':') else {
+                return false;
+            };
+            if name.trim() != w.name {
+                return false;
+            }
+            let home = self
+                .config
+                .display_ref(d)
+                .resolve(&self.displays)
+                .map(|x| x.id == w.home);
+            // An unplugged home can still be named by its UUID.
+            home.unwrap_or_else(|| {
+                w.home
+                    .eq_ignore_ascii_case(d.trim().trim_start_matches("uuid:"))
+            })
+        });
+        scoped
+            .map(|(_, t)| t)
+            .or_else(|| names.get(&w.name))
+            .map(|t| t.trim().to_string())
     }
 
     /// Is a leaf laid out? Ghosts, minimized and floating windows are not.

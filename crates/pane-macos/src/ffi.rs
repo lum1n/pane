@@ -210,6 +210,8 @@ extern "C" {
     pub fn CGEventCreate(source: *const c_void) -> CGEventRef;
     pub fn CGWarpMouseCursorPosition(p: CGPoint) -> i32;
     pub fn CGAssociateMouseAndMouseCursorPosition(connected: u32) -> i32;
+    /// Input Monitoring granted (macOS 10.15+). Never prompts.
+    pub fn CGPreflightListenEventAccess() -> bool;
 }
 
 #[link(name = "ColorSync", kind = "framework")]

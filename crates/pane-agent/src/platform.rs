@@ -37,6 +37,11 @@ pub trait Platform: Send + Sync + 'static {
     fn running_apps(&self) -> Vec<RunningApp>;
     fn is_alive(&self, pid: Pid) -> bool;
     fn ax_trusted(&self, prompt: bool) -> bool;
+    /// Input Monitoring (listen-only key events) for this process; `None`
+    /// when the platform cannot tell.
+    fn input_monitoring(&self) -> Option<bool> {
+        None
+    }
     /// Restore every parked window from the AX mirror (panic path).
     fn emergency_restore(&self) -> usize;
     /// Pull windows of every app off park corners.
@@ -162,6 +167,9 @@ pub mod mac {
         }
         fn ax_trusted(&self, prompt: bool) -> bool {
             m::ax::is_trusted(prompt)
+        }
+        fn input_monitoring(&self) -> Option<bool> {
+            Some(m::ax::input_monitoring())
         }
         fn emergency_restore(&self) -> usize {
             m::recovery::emergency_restore()

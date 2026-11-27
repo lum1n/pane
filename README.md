@@ -40,6 +40,7 @@ All shortcuts are built on one **modifier** (`mod`, Option by default). Change i
 | `mod-shift-r` | reload config |
 | `mod-shift-p` | profile picker |
 | `mod-/` | palette: go to any window, workspace, profile or command |
+| `mod-z` | undo the last layout change |
 
 You can also resize with the mouse: drag the edge a tiled window shares with a neighbour. When you let go, the tile keeps its new size and only that neighbour gives or takes space. Dragging an outer screen edge snaps the window back.
 
@@ -53,6 +54,8 @@ To move a window with the mouse, hold the modifier (Option by default) over it a
 | a screen with no tiles | fills that screen |
 
 Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Hotkeys or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
+
+`mod-z` undoes the last layout change: a move, resize, swap, edge drag, move to another workspace, split direction, tiles/accordion, float/tile, or an applied profile. Press it again to go further back, up to 20 changes. Windows opened since stay where they are, and windows closed since are left out.
 
 `mod-/` (or **Go to Window…** in the menu) opens the palette. Type part of an app name or window title to find a window on any display or workspace, including hidden and minimized ones; Enter shows its workspace and focuses it. With nothing typed, the window you were in before comes first, so `mod-/` then Enter goes back. Workspaces and profiles are listed too; start with `>` to search only commands (each with its shortcut). `pane search TEXT` returns the same list as JSON.
 
@@ -71,6 +74,16 @@ You can also manage scratchpads in **Settings → Scratchpads**, toggle them fro
 
 Profiles can follow your displays. Apply a profile, then choose **Apply “NAME” on These Displays Automatically** in the menu's Profiles submenu (or run `pane profile auto NAME`). From then on, Pane applies that profile by itself whenever exactly those displays are connected. Plug in at the office and get the office layout; unplug and get the laptop one. It waits until the displays have settled for 5 seconds. A profile you pick by hand stays until the displays change. See [docs/config.md](docs/config.md#profiles-that-follow-the-displays).
 
+The menu bar icon draws your desk: each display, the visible workspace's tiles with their app icons, and the name of the workspace you are on if you gave it one. Click a window's tile to focus it; click anywhere else (or right-click) for the menu. Name workspaces in `config.toml`, shown in the icon, the menu and the palette:
+
+```toml
+[workspace_names]
+"1" = "web"
+"right:3" = "chat"     # only workspace 3 of the right display
+```
+
+Layout presets arrange a workspace for you. `layout master-stack` puts one large tile on the left (60% wide, `master_ratio`) and stacks the rest on the right; `layout columns 3` deals the tiles into three equal columns. The workspace keeps that shape as windows open and close, until `layout manual`. `balance` gives the tiles of the focused container equal sizes again. Run them from the palette (`>layout`, `>balance`) or bind them in `[shortcuts]`. See [docs/config.md](docs/config.md#layout-presets).
+
 The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
 
 Two pointer options, both off by default (Settings > General > Focus). `mouse_follows_focus = true` moves the pointer to the middle of the window you focus with a hotkey, the palette or the CLI, also onto another display (or to the middle of an empty display); it stays put if it is already over that window. `focus_follows_mouse = true` focuses the window under the pointer once the pointer has rested there for 150 ms. Only moving the pointer counts: windows that slide under a still pointer (a workspace switch) do not take focus, and neither does anything while you hold the gesture modifier.
@@ -84,7 +97,14 @@ pane reload               pane recover [--all-apps]
 pane search saf           pane do "focus-window 1234"
 pane do "scratchpad com.googlecode.iterm2"    pane do "summon Safari"
 pane subscribe [focus|workspace-shown|workspaces|displays|profile] [--snapshot]
+pane doctor [--json]
 ```
+
+### When something is off: `pane doctor`
+
+`pane doctor` prints one report: whether Pane has Accessibility and Input Monitoring and its hotkeys run, the displays it sees, apps that are not responding or have windows Pane gave up tiling (with each window's reason), errors in `config.toml`, and a stale `run.lock` left by a run that crashed. It exits 1 when it finds a problem; `--json` prints the same report as JSON.
+
+It also works when Pane is not running. Then the permissions shown are the terminal's (macOS grants them per app, so they say nothing about Pane's), and the list of troubled apps is unknown; displays, config and the lock are still checked.
 
 ### Scripting with `pane subscribe`
 

@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::display::{DisplayRef, Position};
+use crate::display::{Display, DisplayRef, Position};
+use crate::geometry::Orientation;
 use crate::proto::Command;
-use crate::rules::{Rule, RuleAction};
+use crate::rules::{Rule, RuleAction, TilePlacement, TilePosition};
 use crate::tree::ContainerLayout;
 
 pub const CONFIG_VERSION: u32 = 1;
@@ -29,6 +30,11 @@ pub struct Config {
     /// Apps summoned and dismissed with one key, as a centered float.
     #[serde(default, rename = "scratchpad")]
     pub scratchpads: Vec<ScratchpadConfig>,
+    /// Workspace -> name shown in the menu bar icon, the menu and the
+    /// palette. Keys are a workspace (`"1"`, on every display) or
+    /// `DISPLAY:WORKSPACE` (`"right:3"`), which wins.
+    #[serde(default)]
+    pub workspace_names: BTreeMap<String, String>,
     /// Chord -> command, merged over the defaults. `"none"` unbinds.
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
@@ -43,6 +49,8 @@ fn version_one() -> u32 {
 pub struct Settings {
     pub inner_gap: f64,
     pub outer_gap: f64,
+    /// No gaps on a workspace that shows a single tile.
+    pub smart_gaps: bool,
     pub default_layout: ContainerLayout,
     pub placement_memory_days: u32,
     pub restore_placements: bool,
@@ -85,6 +93,11 @@ pub struct Settings {
     pub mouse_follows_focus: bool,
     /// Focus the window under the pointer once it has rested there briefly.
     pub focus_follows_mouse: bool,
+    /// Draw each window's app icon on its tile in the menu bar icon.
+    pub menu_bar_app_icons: bool,
+    /// Share of the width `layout master-stack` gives the master tile
+    /// (0.1 to 0.9).
+    pub master_ratio: f64,
 }
 
 impl Default for Settings {
@@ -92,6 +105,7 @@ impl Default for Settings {
         Settings {
             inner_gap: 6.0,
             outer_gap: 6.0,
+            smart_gaps: false,
             default_layout: ContainerLayout::Tiles,
             placement_memory_days: 30,
             restore_placements: true,
@@ -117,6 +131,8 @@ impl Default for Settings {
             dim_unfocused: 0.0,
             mouse_follows_focus: false,
             focus_follows_mouse: false,
+            menu_bar_app_icons: true,
+            master_ratio: 0.6,
         }
     }
 }
@@ -131,6 +147,32 @@ pub struct DisplayAlias {
     pub match_name: Option<String>,
     #[serde(default)]
     pub position: Option<Position>,
+    /// Overrides `[settings] inner_gap` on this display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner_gap: Option<f64>,
+    /// Overrides `[settings] outer_gap` on this display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outer_gap: Option<f64>,
+}
+
+impl DisplayAlias {
+    /// The display this alias stands for.
+    pub fn display_ref(&self) -> Option<DisplayRef> {
+        if let Some(u) = &self.uuid {
+            return Some(DisplayRef::Uuid(u.clone()));
+        }
+        if let Some(n) = &self.match_name {
+            return Some(DisplayRef::Name(n.clone()));
+        }
+        self.position.map(DisplayRef::Position)
+    }
+}
+
+/// Gaps in effect on one display.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gaps {
+    pub inner: f64,
+    pub outer: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -177,6 +219,29 @@ pub struct RuleConfig {
     pub workspace: Option<String>,
     #[serde(default)]
     pub display: Option<String>,
+    /// Where the tile goes when a matching window is first tiled.
+    #[serde(default)]
+    pub position: Option<TilePosition>,
+    /// How the new tile splits the focused one (with `position = "next"`).
+    #[serde(default)]
+    pub orientation: Option<Orientation>,
+    /// Layout of the split the new tile lands in.
+    #[serde(default)]
+    pub layout: Option<ContainerLayout>,
+    /// Share of that split, between 0 and 1.
+    #[serde(default)]
+    pub weight: Option<f64>,
+}
+
+impl RuleConfig {
+    pub fn placement(&self) -> TilePlacement {
+        TilePlacement {
+            position: self.position,
+            orientation: self.orientation,
+            layout: self.layout,
+            weight: self.weight,
+        }
+    }
 }
 
 /// `[[scratchpad]]`: one window of `app`, toggled by `scratchpad NAME`.
@@ -628,6 +693,7 @@ pub fn default_shortcuts(base: &Mods) -> Vec<(String, String)> {
     add(mv, "f", "toggle-fullscreen".into());
     add(mv, "p", "profile-picker".into());
     add(b, "slash", "palette".into());
+    add(b, "z", "undo".into());
     for i in 1..=9 {
         add(b, &i.to_string(), format!("workspace {i}"));
         add(mv, &i.to_string(), format!("move-to-workspace {i}"));
@@ -644,6 +710,7 @@ impl Default for Config {
             workspaces: vec![],
             rules: vec![],
             scratchpads: vec![],
+            workspace_names: BTreeMap::new(),
             shortcuts: BTreeMap::new(),
         }
     }
@@ -677,7 +744,8 @@ impl Config {
             )));
         }
         let s = &self.settings;
-        if !(0.0..=200.0).contains(&s.inner_gap) || !(0.0..=200.0).contains(&s.outer_gap) {
+        let gap_ok = |g: f64| (0.0..=200.0).contains(&g);
+        if !gap_ok(s.inner_gap) || !gap_ok(s.outer_gap) {
             return Err(ConfigError::plain("gaps must be between 0 and 200"));
         }
         if !(0.005..=0.5).contains(&s.resize_step) {
@@ -693,6 +761,11 @@ impl Config {
                 "dim_unfocused must be between 0 and 0.8",
             ));
         }
+        if !crate::workspace::MASTER_RATIO_RANGE.contains(&s.master_ratio) {
+            return Err(ConfigError::plain(
+                "master_ratio must be between 0.1 and 0.9",
+            ));
+        }
         self.border_rgba()?;
         for d in &self.displays {
             let n =
@@ -700,6 +773,12 @@ impl Config {
             if n != 1 {
                 return Err(ConfigError::plain(format!(
                     "[[display]] `{}` needs exactly one of uuid, match_name, position",
+                    d.name
+                )));
+            }
+            if !d.inner_gap.into_iter().chain(d.outer_gap).all(gap_ok) {
+                return Err(ConfigError::plain(format!(
+                    "[[display]] `{}`: gaps must be between 0 and 200",
                     d.name
                 )));
             }
@@ -726,6 +805,20 @@ impl Config {
                 parse_size(size).map_err(|e| ConfigError::plain(format!("{what}: {e}")))?;
             }
         }
+        for (key, title) in &self.workspace_names {
+            let ws = key.rsplit_once(':').map_or(key.as_str(), |(_, w)| w);
+            if !crate::workspace::valid_name(ws) || key.starts_with(':') {
+                return Err(ConfigError::plain(format!(
+                    "[workspace_names] `{key}`: expected a workspace like \"3\" or \"right:3\""
+                )));
+            }
+            let t = title.trim();
+            if t.is_empty() || t.chars().count() > 32 {
+                return Err(ConfigError::plain(format!(
+                    "[workspace_names] `{key}`: names are 1 to 32 characters"
+                )));
+            }
+        }
         self.compiled_rules()?;
         self.bindings()?;
         self.gesture_mods()?;
@@ -734,22 +827,44 @@ impl Config {
 
     /// Resolve a display name used in `[[rule]]`, profiles or targets.
     pub fn display_ref(&self, s: &str) -> DisplayRef {
-        if let Some(a) = self
-            .displays
+        self.displays
             .iter()
             .find(|a| a.name.eq_ignore_ascii_case(s.trim()))
-        {
-            if let Some(u) = &a.uuid {
-                return DisplayRef::Uuid(u.clone());
+            .and_then(DisplayAlias::display_ref)
+            .unwrap_or_else(|| DisplayRef::parse(s))
+    }
+
+    /// Gaps on `display`: `[settings]`, overridden per side by the first
+    /// `[[display]]` alias that resolves to it (among `displays`, the
+    /// connected ones) and sets that gap.
+    pub fn gaps_for(&self, display: &Display, displays: &[Display]) -> Gaps {
+        let mut gaps = Gaps {
+            inner: self.settings.inner_gap,
+            outer: self.settings.outer_gap,
+        };
+        let mut inner_set = false;
+        let mut outer_set = false;
+        for a in &self.displays {
+            if a.inner_gap.is_none() && a.outer_gap.is_none() {
+                continue;
             }
-            if let Some(n) = &a.match_name {
-                return DisplayRef::Name(n.clone());
+            let here = a
+                .display_ref()
+                .and_then(|r| r.resolve(displays))
+                .is_some_and(|d| d.id == display.id);
+            if !here {
+                continue;
             }
-            if let Some(p) = a.position {
-                return DisplayRef::Position(p);
+            if let (Some(g), false) = (a.inner_gap, inner_set) {
+                gaps.inner = g;
+                inner_set = true;
+            }
+            if let (Some(g), false) = (a.outer_gap, outer_set) {
+                gaps.outer = g;
+                outer_set = true;
             }
         }
-        DisplayRef::parse(s)
+        gaps
     }
 
     /// `[[rule]]`s in order, then one float rule per `float_apps` entry (so
@@ -781,6 +896,7 @@ impl Config {
                     r.workspace.clone(),
                     r.display.as_ref().map(|d| self.display_ref(d)),
                 )
+                .and_then(|rule| rule.with_placement(r.placement()))
                 .map_err(|e| ConfigError::plain(format!("rule #{}: {e}", i + 1)))
             })
             .chain(float_apps)
@@ -957,6 +1073,8 @@ version = 1
 [settings]
 inner_gap = 6
 outer_gap = 6
+# No gaps on a workspace that shows a single tile.
+smart_gaps = false
 default_layout = "tiles"
 placement_memory_days = 30
 restore_placements = true
@@ -988,6 +1106,10 @@ dim_unfocused = 0
 # window the pointer rests over.
 mouse_follows_focus = false
 focus_follows_mouse = false
+# Draw each window's app icon on its tile in the menu bar icon.
+menu_bar_app_icons = true
+# Width share of the large tile in `layout master-stack` (0.1 to 0.9).
+master_ratio = 0.6
 
 # Apps whose windows always start floating (bundle ids, or the executable
 # name for apps started from a terminal; * globs work).
@@ -997,6 +1119,7 @@ focus_follows_mouse = false
 
 # Name displays so workspaces and rules can refer to them.
 # Match by position (left/center/right), uuid = "..." or match_name = "DELL".
+# A [[display]] can override the gaps above for that display (see docs/config.md).
 [[display]]
 name = "left"
 position = "left"
@@ -1012,6 +1135,12 @@ position = "right"
 # Every display has its own workspaces 1-9: mod-N shows workspace N on the
 # display you are working on.
 
+# Optional names, shown in the menu bar icon, the menu and the palette.
+# "DISPLAY:N" names workspace N of one display only and wins over "N".
+# [workspace_names]
+# "1" = "web"
+# "right:3" = "chat"
+
 # A scratchpad: one key shows the app's window as a centered float on the
 # display you are working on (opening the app if needed); again hides it.
 # [[scratchpad]]
@@ -1026,6 +1155,14 @@ position = "right"
 # action = "float"           # float | tile | ignore
 # workspace = "3"           # workspace 3 of the display the window opens on
 # display = "right"          # ...or of this display
+
+# Where a matching window's tile goes when it is first tiled:
+# [[rule]]
+# app = "com.mitchellh.ghostty"
+# position = "right"         # next | left | right | top | bottom
+# weight = 0.3               # share of the split, 0-1
+# orientation = "vertical"   # with position = "next": stack under the focused tile
+# layout = "accordion"       # tiles | accordion: layout of the split it lands in
 
 [shortcuts]
 # "mod" means the modifier above.
@@ -1049,6 +1186,21 @@ mod tests {
     }
 
     #[test]
+    fn workspace_names_validated() {
+        let c =
+            Config::parse("[workspace_names]\n\"1\" = \"web\"\n\"right:3\" = \"chat\"\n").unwrap();
+        assert_eq!(c.workspace_names.len(), 2);
+        assert!(Config::parse("[workspace_names]\n\"1\" = \" \"\n").is_err());
+        assert!(Config::parse("[workspace_names]\n\"left:\" = \"x\"\n").is_err());
+        assert!(Config::parse("[workspace_names]\n\":2\" = \"x\"\n").is_err());
+        assert!(Config::parse(&format!(
+            "[workspace_names]\n\"2\" = \"{}\"\n",
+            "x".repeat(33)
+        ))
+        .is_err());
+    }
+
+    #[test]
     fn unknown_field_reports_position() {
         let e = Config::parse("version = 1\n[settings]\ninner_gapp = 3\n").unwrap_err();
         assert_eq!(e.line, Some(3));
@@ -1058,6 +1210,19 @@ mod tests {
     #[test]
     fn bad_regex_and_chord_rejected() {
         assert!(Config::parse("[[rule]]\ntitle = \"(\"\n").is_err());
+        assert!(Config::parse("[[rule]]\napp = \"x\"\nweight = 2.0\n").is_err());
+        assert!(Config::parse("[[rule]]\napp = \"x\"\nposition = \"middle\"\n").is_err());
+        assert!(
+            Config::parse("[[rule]]\napp = \"x\"\nposition = \"top\"\norientation = \"h\"\n")
+                .is_err()
+        );
+        let c = Config::parse(
+            "[[rule]]\napp = \"x\"\nposition = \"down\"\nweight = 0.3\nlayout = \"accordion\"\n",
+        )
+        .unwrap();
+        let p = c.compiled_rules().unwrap()[0].placement;
+        assert_eq!(p.position, Some(TilePosition::Bottom));
+        assert_eq!(p.layout, Some(ContainerLayout::Accordion));
         assert!(Config::parse("[shortcuts]\n\"fn-x\" = \"reload\"\n").is_err());
         assert!(Config::parse("[shortcuts]\n\"alt-x\" = \"frobnicate\"\n").is_err());
     }
@@ -1230,6 +1395,56 @@ mod tests {
         assert!(Config::parse("[settings]\nborder_color = \"blue\"\n").is_err());
         assert!(Config::parse("[settings]\nborder_width = 30\n").is_err());
         assert!(Config::parse("[settings]\ndim_unfocused = 0.9\n").is_err());
+        assert_eq!(Config::default().settings.master_ratio, 0.6);
+        assert!(Config::parse("[settings]\nmaster_ratio = 0.7\n").is_ok());
+        assert!(Config::parse("[settings]\nmaster_ratio = 0.95\n").is_err());
+    }
+
+    #[test]
+    fn per_display_gaps() {
+        use crate::display::testutil::three;
+        let ds = three();
+        let c = Config::parse(
+            "[settings]\ninner_gap = 8\nouter_gap = 10\nsmart_gaps = true\n\
+             [[display]]\nname = \"laptop\"\nposition = \"left\"\ninner_gap = 0\nouter_gap = 0\n\
+             [[display]]\nname = \"big\"\nuuid = \"r\"\nouter_gap = 20\n\
+             [[display]]\nname = \"big2\"\nposition = \"right\"\nouter_gap = 99\ninner_gap = 3\n",
+        )
+        .unwrap();
+        assert!(c.settings.smart_gaps);
+        let gaps = |id: &str| c.gaps_for(ds.iter().find(|d| d.id == id).unwrap(), &ds);
+        assert_eq!(
+            gaps("L"),
+            Gaps {
+                inner: 0.0,
+                outer: 0.0
+            }
+        );
+        // No override: [settings].
+        assert_eq!(
+            gaps("C"),
+            Gaps {
+                inner: 8.0,
+                outer: 10.0
+            }
+        );
+        // The first alias that sets a gap wins, per gap.
+        assert_eq!(
+            gaps("R"),
+            Gaps {
+                inner: 3.0,
+                outer: 20.0
+            }
+        );
+        assert!(!Config::default().settings.smart_gaps);
+        let e = Config::parse("[[display]]\nname = \"x\"\nposition = \"left\"\nouter_gap = 300\n")
+            .unwrap_err();
+        assert!(e.message.contains("gaps"), "{}", e.message);
+        assert!(
+            Config::parse("[[display]]\nname = \"x\"\nposition = \"left\"\ninner_gap = -1\n")
+                .is_err()
+        );
+        assert!(Config::parse(STARTER_CONFIG).is_ok());
     }
 
     #[test]

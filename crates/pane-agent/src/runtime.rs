@@ -903,6 +903,12 @@ impl Core {
         let local = match cmd {
             Command::Reload => Some(self.load_config()),
             Command::ProfileList => Some(Reply::data(&self.profiles)),
+            Command::Doctor => Some(Reply::data(&crate::doctor::Live::from_model(
+                &self.m,
+                self.platform.ax_trusted(false),
+                self.platform.input_monitoring(),
+                self.hotkey_tx.as_ref().map(|_| self.hotkeys.is_some()),
+            ))),
             Command::ProfileWhen { ref name, here } => Some(self.profile_when(name, here)),
             // Re-capturing a saved profile keeps its `[when]`.
             Command::ProfileCapture { ref name } => {
