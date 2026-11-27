@@ -549,6 +549,38 @@ fn unplug_and_replug_keeps_everything_reachable() {
 }
 
 #[test]
+fn empty_guests_are_hidden_from_snapshot_and_cycling() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "centre", CENTER);
+    s.cmd(Command::FocusDisplay { which: Cycle::Next });
+    assert_eq!(s.m.focus_display.as_deref(), Some("R"));
+    s.window(100, 2, "right", CENTER);
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "R/1");
+    s.ev(Event::DisplaysChanged {
+        displays: displays(&["L", "C"]),
+    });
+    let listed = |s: &Sim, id: &str| {
+        pane_core::snapshot::build(&s.m)
+            .workspaces
+            .iter()
+            .any(|w| w.id == id)
+    };
+    assert!(listed(&s, "R/1"), "a guest with windows is listed");
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(2),
+    });
+    assert!(s.m.ws("R/1").unwrap().is_guest(), "still kept as a guest");
+    assert!(!listed(&s, "R/1"), "an empty guest is not listed");
+    // Cycling on C skips it (C/1 is the only stop, so nothing changes).
+    s.focus(100, 1);
+    assert_eq!(s.m.focus_display.as_deref(), Some("C"));
+    s.cmd(Command::CycleWorkspace { which: Cycle::Next });
+    assert_eq!(s.m.visible["C"], "C/1");
+}
+
+#[test]
 fn move_and_swap_workspaces_between_displays() {
     let mut s = Sim::new();
     s.launch(100, "a");

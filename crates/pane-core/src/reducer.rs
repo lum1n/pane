@@ -2134,7 +2134,6 @@ fn cmd_cycle_workspace(m: &mut Model, which: Cycle, fx: &mut Vec<Effect>) -> Rep
         .into_iter()
         .filter(|w| {
             Some(&w.id) == current.as_ref()
-                || w.is_guest()
                 || w.floating.iter().any(|f| !m.scratch_hidden.contains(f))
                 || m.tree
                     .windows(w.root)

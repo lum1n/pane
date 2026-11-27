@@ -189,8 +189,9 @@ pub fn build(m: &Model) -> Snapshot {
                     .filter(|f| !m.scratch_hidden.contains(f))
                     .count();
             let visible = m.is_visible(&w.id);
-            // Empty workspaces only show up while visible.
-            if windows == 0 && !visible && !w.is_guest() {
+            // Empty workspaces only show up while visible (guests too: an
+            // empty guest has nothing to reach, and still goes home on replug).
+            if windows == 0 && !visible {
                 continue;
             }
             let label = if w.is_guest() {
