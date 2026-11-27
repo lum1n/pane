@@ -18,6 +18,8 @@ make install                  # copy to /Applications; `make link-cli` puts `pan
 
 On first launch, Pane opens a short welcome window that walks you through granting Accessibility access. Tiling starts as soon as you grant it. `make agent` builds the headless `pane-agentd` (everything except the UI), which is handy for debugging from a terminal.
 
+`make release` builds the version to hand out: `build/Pane-<version>.dmg`, signed with the Developer ID certificate, notarized and stapled. It needs that certificate in the keychain and a notarytool profile, made once with `xcrun notarytool store-credentials pane-notary --apple-id <Apple ID> --team-id DR7HQ24F77` (`NOTARY_PROFILE=<name>` picks another). The version comes from `CFBundleShortVersionString` in `shell/Resources/Info.plist`. A Developer ID build is signed differently from a "Pane Dev" build, so macOS asks for Accessibility again the first time you switch between them.
+
 ## Use
 
 Every display has its own workspaces 1-9. They stay on their display: unplug a monitor and its workspaces wait, hidden, on the nearest remaining display (reachable from the menu), then go back when it returns. A new monitor plugged in at the same spot takes them over.

@@ -3,10 +3,13 @@ APP        := build/Pane.app
 INSTALL    := /Applications/Pane.app
 SUPPORT    := $(HOME)/Library/Application Support/Pane
 
-.PHONY: app agent test check-mac install run stop logs recover header link-cli clean
+.PHONY: app release agent test check-mac install run stop logs recover header link-cli clean
 
 app:
 	scripts/build-app.sh
+
+release:
+	scripts/release.sh
 
 agent:
 	cargo build --release --target aarch64-apple-darwin -p pane-agent -p pane-cli

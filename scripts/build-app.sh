@@ -3,7 +3,9 @@
 #
 #   CODESIGN_IDENTITY  signing identity (default "Pane Dev", see make-dev-cert.sh;
 #                      "-" for ad-hoc, which makes macOS re-ask for Accessibility
-#                      after every rebuild)
+#                      after every rebuild). A "Developer ID Application: ..."
+#                      identity also gets a secure timestamp, which notarization
+#                      needs; scripts/release.sh builds that way.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -40,6 +42,9 @@ if [[ -f shell/Resources/AppIcon.icns ]]; then
 fi
 
 echo "==> Sign ($IDENTITY)"
+# Notarization needs a secure timestamp; dev builds skip the round trip to Apple.
+TIMESTAMP=--timestamp=none
+[[ "$IDENTITY" == "Developer ID Application:"* ]] && TIMESTAMP=--timestamp
 if [[ "$IDENTITY" != "-" ]]; then
     # Resolve the name to the SHA-1 of a *valid* identity: stale or untrusted
     # certs with the same name make `codesign --sign <name>` fail as ambiguous.
@@ -54,8 +59,8 @@ if [[ "$IDENTITY" != "-" ]]; then
     fi
 fi
 for helper in "$APP/Contents/Helpers/"*; do
-    codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$helper"
+    codesign --force --options runtime "$TIMESTAMP" --sign "$IDENTITY" "$helper"
 done
-codesign --force --options runtime --timestamp=none --sign "$IDENTITY" --identifier com.vegard.pane "$APP"
+codesign --force --options runtime "$TIMESTAMP" --sign "$IDENTITY" --identifier com.vegard.pane "$APP"
 codesign --verify --strict --verbose=1 "$APP"
 echo "==> $APP"
