@@ -30,6 +30,8 @@ pub trait HotkeyHandle: Send {
     /// Report left-button drags and releases as `Command::Drag` (title-bar
     /// drag of a tiled window).
     fn set_drag(&self, _on: bool) {}
+    /// Report trackpad swipes as `Command::Swipe`.
+    fn set_swipes(&self, _on: bool) {}
 }
 
 pub trait Platform: Send + Sync + 'static {
@@ -147,6 +149,9 @@ pub mod mac {
         }
         fn set_drag(&self, on: bool) {
             self.0.set_drag(on)
+        }
+        fn set_swipes(&self, on: bool) {
+            self.0.set_swipes(on)
         }
     }
 

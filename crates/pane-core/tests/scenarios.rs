@@ -12,6 +12,7 @@ use pane_core::proto::{Command, Reply, UiRequest};
 use pane_core::reconcile::reconcile;
 use pane_core::reducer::{capture, reduce, refresh_placements};
 use pane_core::rules::WindowRole;
+use pane_core::swipe::Swipe;
 use pane_core::workspace::Cycle;
 use pane_core::{Pid, WindowId};
 
@@ -2897,4 +2898,42 @@ fn hidden_profile_slot_does_not_take_windows_of_a_running_app() {
     s.window(200, 3, "Settings", CENTER);
     assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/1");
     assert!(s.on_screen(3));
+}
+
+// ------------------------------------------------------ trackpad swipes
+
+#[test]
+fn trackpad_swipes_cycle_the_display_under_the_pointer() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "c1", CENTER);
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.window(100, 2, "c2", CENTER);
+    assert_eq!(s.m.visible["C"], "C/2");
+    // Focus is on the left display; the pointer is over the centre one.
+    s.cmd(Command::FocusDisplay { which: Cycle::Prev });
+    assert_eq!(s.m.focus_display.as_deref(), Some("L"));
+    let swipe = |s: &mut Sim, swipe: Swipe| {
+        s.ev(Event::Command {
+            cmd: Command::Swipe {
+                swipe,
+                at: pt(900.0, 500.0),
+            },
+            token: None,
+        })
+    };
+    // Off by default: nothing happens.
+    swipe(&mut s, Swipe::Left);
+    assert_eq!(s.m.visible["C"], "C/2");
+    s.m.config.settings.trackpad_swipes = true;
+    swipe(&mut s, Swipe::Left);
+    assert_eq!(s.m.visible["C"], "C/1");
+    assert_eq!(s.m.visible["L"], "L/1");
+    swipe(&mut s, Swipe::Right);
+    assert_eq!(s.m.visible["C"], "C/2");
+    let fx = swipe(&mut s, Swipe::Up);
+    assert!(fx
+        .iter()
+        .any(|f| matches!(f, Effect::UiRequest(UiRequest::Palette))));
+    assert_eq!(s.m.visible["C"], "C/2");
 }

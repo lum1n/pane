@@ -26,6 +26,7 @@ struct PaneSettings: Codable, Equatable {
     var mouse_follows_focus: Bool
     var focus_follows_mouse: Bool
     var title_drag: Bool?
+    var trackpad_swipes: Bool?
     var menu_bar_app_icons: Bool?
 }
 

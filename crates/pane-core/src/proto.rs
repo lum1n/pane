@@ -10,6 +10,7 @@ use crate::geometry::{Direction, Orientation, Point, Rect};
 use crate::gesture::{DragPhase, GesturePhase};
 use crate::profile::{Profile, ProfileEdit};
 use crate::stream::EventKind;
+use crate::swipe::Swipe;
 use crate::workspace::Cycle;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -184,6 +185,13 @@ pub enum Command {
     /// drag of a tiled window). Not in the text form.
     Drag {
         phase: DragPhase,
+    },
+    /// A trackpad swipe with the pointer at `at`: three fingers left/right
+    /// cycle the workspaces of the display under the pointer, four fingers
+    /// up open the palette. Not in the text form.
+    Swipe {
+        swipe: Swipe,
+        at: Point,
     },
     /// Stream events (`stream::StreamEvent`) as JSON lines after the
     /// `{"status":"ok"}` reply. Only works over the control socket. An empty

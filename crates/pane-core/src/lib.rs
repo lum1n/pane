@@ -26,6 +26,7 @@ pub mod rules;
 pub mod snapshot;
 pub mod state;
 pub mod stream;
+pub mod swipe;
 pub mod tree;
 pub mod undo;
 pub mod worker;

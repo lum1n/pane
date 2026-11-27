@@ -593,6 +593,7 @@ impl Core {
             Ok(h) => {
                 h.set_hover(self.m.config.settings.focus_follows_mouse);
                 h.set_drag(self.m.config.settings.title_drag);
+                h.set_swipes(self.m.config.settings.trackpad_swipes);
                 self.hotkeys = Some(h);
             }
             Err(e) => {
@@ -901,6 +902,7 @@ impl Core {
                     let gesture = c.gesture_mods().ok().flatten();
                     let hover = c.settings.focus_follows_mouse;
                     let drag = c.settings.title_drag;
+                    let swipes = c.settings.trackpad_swipes;
                     self.reduce(Event::ConfigLoaded {
                         config: Box::new(c),
                     });
@@ -908,6 +910,7 @@ impl Core {
                         h.update(&bindings, gesture);
                         h.set_hover(hover);
                         h.set_drag(drag);
+                        h.set_swipes(swipes);
                     }
                     Reply::ok()
                 }

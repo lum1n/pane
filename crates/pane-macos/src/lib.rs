@@ -20,6 +20,8 @@ pub mod recovery;
 #[cfg(target_os = "macos")]
 pub mod runloop;
 #[cfg(target_os = "macos")]
+pub mod touches;
+#[cfg(target_os = "macos")]
 pub mod window_probe;
 #[cfg(target_os = "macos")]
 pub mod worker;
