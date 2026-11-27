@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         events.start()
+        UpdateChecker.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

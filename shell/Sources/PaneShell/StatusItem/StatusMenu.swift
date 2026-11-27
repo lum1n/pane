@@ -27,6 +27,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     func rebuild() {
         menu.removeAllItems()
         let snap = PaneCore.shared.snapshot
+        if let r = UpdateChecker.shared.available {
+            menu.addItem(item("Pane \(r.version) Is Available…", #selector(showUpdate)))
+            menu.addItem(.separator())
+        }
         if let s = snap {
             if !s.ax_trusted {
                 menu.addItem(item("Grant Accessibility Access…", #selector(grantAccess)))
@@ -113,6 +117,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Profile Editor…", #selector(editProfiles), key: "e"))
         menu.addItem(item("Settings…", #selector(settings), key: ","))
+        menu.addItem(item("Check for Updates…", #selector(checkForUpdates)))
         menu.addItem(.separator())
         menu.addItem(item("Quit Pane", #selector(quit), key: "q"))
     }
@@ -187,6 +192,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func editProfiles() { openEditor() }
     @objc private func settings() { openSettings() }
+    @objc private func checkForUpdates() { UpdateChecker.shared.check(userInitiated: true) }
+
+    @objc private func showUpdate() {
+        if let r = UpdateChecker.shared.available { UpdateChecker.shared.offer(r) }
+    }
+
     @objc private func recover() { PaneCore.shared.recover() }
     @objc private func grantAccess() { Permissions.explain() }
 
