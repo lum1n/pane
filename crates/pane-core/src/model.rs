@@ -81,6 +81,11 @@ pub struct SentFrame {
     /// A read-back larger than `rect`, waiting for a retry to confirm that
     /// it is the app's minimum size and not a late resize.
     pub oversize: Option<Size>,
+    /// Sent while an earlier, different frame to the same window was still
+    /// unanswered (a burst, as at startup). The app may still be applying
+    /// that earlier frame, so a too-large read-back of this one can be a
+    /// stale in-between size: it does not start a min-size confirmation.
+    pub burst: bool,
 }
 
 /// A window being moved by holding the modifier and pointing.

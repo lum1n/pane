@@ -369,6 +369,7 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
                             settled: true,
                             parked: m.parked.contains_key(&wid),
                             oversize: None,
+                            burst: false,
                         },
                     );
                     false
@@ -388,6 +389,12 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
             _ => (0, None),
         };
         let was_parked = m.last_sent.get(&wid).map(|s| s.parked);
+        // Replacing a different frame the app has not answered yet.
+        let burst = m.last_sent.get(&wid).is_some_and(|s| {
+            !s.settled
+                && !s.rect.approx_eq(&rect, 0.5)
+                && now.saturating_sub(s.at_ms) < MIN_SIZE_CONFIRM_MS
+        });
         if was_parked != Some(target_parked) {
             let title = &m.windows[&wid].title;
             if target_parked {
@@ -407,6 +414,7 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
                 settled: false,
                 parked: target_parked,
                 oversize,
+                burst,
             },
         );
         if let Some(a) = m.apps.get_mut(&pid) {
@@ -474,7 +482,10 @@ pub fn on_frame_applied(
     // Larger than asked: the app may have a minimum size, or it applies the
     // resize late and this is still its old size. Once a retry reads the
     // same size, remember it and let the layout give the space to a
-    // neighbour. Until then it is retried like any other miss.
+    // neighbour. Until then it is retried like any other miss. A frame sent
+    // in a burst (another frame went to the window just before it) cannot
+    // start that confirmation: the app may still be working through the
+    // earlier frame, and its in-between size can read back the same twice.
     let too_big = !parked && (a.w > d.w + 2.0 || a.h > d.h + 2.0);
     let confirmed = s
         .oversize
@@ -542,7 +553,7 @@ pub fn on_frame_applied(
     }
     let e = m.last_sent.get_mut(&wid).unwrap();
     e.attempts = attempts;
-    e.oversize = too_big.then(|| a.size());
+    e.oversize = (too_big && !s.burst).then(|| a.size());
     let mut wait = RETRY_BACKOFF_MS[(attempts - 1) as usize];
     if too_big {
         wait = wait.max(MIN_SIZE_CONFIRM_MS);
