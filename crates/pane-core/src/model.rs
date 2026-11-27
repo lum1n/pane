@@ -78,6 +78,9 @@ pub struct SentFrame {
     pub settled: bool,
     /// The frame was a park rect (hiding the window).
     pub parked: bool,
+    /// A read-back larger than `rect`, waiting for a retry to confirm that
+    /// it is the app's minimum size and not a late resize.
+    pub oversize: Option<Size>,
 }
 
 /// A window being moved by holding the modifier and pointing.
@@ -110,6 +113,8 @@ pub struct PendingLaunch {
 }
 
 pub const RETRY_BACKOFF_MS: [u64; 5] = [50, 150, 400, 1000, 2500];
+/// Shortest wait before a too-large read-back is checked again.
+pub const MIN_SIZE_CONFIRM_MS: u64 = 500;
 pub const UNRESPONSIVE_AFTER_MS: u64 = 2000;
 pub const PENDING_SLOT_MS: u64 = 30_000;
 pub const GHOST_TTL_MS: u64 = 10 * 60 * 1000;

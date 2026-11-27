@@ -2407,6 +2407,8 @@ fn cmd_toggle_float(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
             wi.mode = WindowMode::Tiled;
             wi.reason = "tiled with toggle-float".into();
             wi.stubborn = false;
+            // Learn it again: what we have may be wrong or out of date.
+            wi.min_size = None;
         }
     }
     m.ws_mut(&ws).unwrap().focused = Some(wid);
@@ -3184,6 +3186,7 @@ fn drop_window(m: &mut Model, wid: WindowId, target: &DropTarget, fx: &mut Vec<E
     wi.stubborn = false;
     if w.mode == WindowMode::Floating {
         wi.reason = "tiled by a gesture".into();
+        wi.min_size = None;
     }
     m.ghosts.remove(&wid);
     m.drags.remove(&wid);

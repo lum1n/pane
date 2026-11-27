@@ -4,7 +4,7 @@ use crate::display::{park_rect, Display};
 use crate::effect::Effect;
 use crate::geometry::{Rect, Size};
 use crate::layout::{self, LayoutInput};
-use crate::model::{Model, SentFrame, WindowMode, RETRY_BACKOFF_MS};
+use crate::model::{Model, SentFrame, WindowMode, MIN_SIZE_CONFIRM_MS, RETRY_BACKOFF_MS};
 use crate::proto::UiRequest;
 use crate::state::ParkedEntry;
 use crate::tree::{Leaf, NodeId, Tree};
@@ -368,6 +368,7 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
                             next_retry_ms: None,
                             settled: true,
                             parked: m.parked.contains_key(&wid),
+                            oversize: None,
                         },
                     );
                     false
@@ -382,9 +383,9 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
             continue;
         }
         let gen = m.next_gen();
-        let attempts = match m.last_sent.get(&wid) {
-            Some(s) if s.rect.approx_eq(&rect, 0.5) => s.attempts,
-            _ => 0,
+        let (attempts, oversize) = match m.last_sent.get(&wid) {
+            Some(s) if s.rect.approx_eq(&rect, 0.5) => (s.attempts, s.oversize),
+            _ => (0, None),
         };
         let was_parked = m.last_sent.get(&wid).map(|s| s.parked);
         if was_parked != Some(target_parked) {
@@ -405,6 +406,7 @@ pub fn reconcile(m: &mut Model) -> Vec<Effect> {
                 next_retry_ms: None,
                 settled: false,
                 parked: target_parked,
+                oversize,
             },
         );
         if let Some(a) = m.apps.get_mut(&pid) {
@@ -469,9 +471,15 @@ pub fn on_frame_applied(
         e.next_retry_ms = None;
         return;
     }
-    // Larger than asked: the app has a minimum size. Remember it and let
-    // the layout give the space to a neighbour instead of retrying.
-    if !parked && (a.w > d.w + 2.0 || a.h > d.h + 2.0) {
+    // Larger than asked: the app may have a minimum size, or it applies the
+    // resize late and this is still its old size. Once a retry reads the
+    // same size, remember it and let the layout give the space to a
+    // neighbour. Until then it is retried like any other miss.
+    let too_big = !parked && (a.w > d.w + 2.0 || a.h > d.h + 2.0);
+    let confirmed = s
+        .oversize
+        .is_some_and(|o| (a.w - o.w).abs() <= 2.0 && (a.h - o.h).abs() <= 2.0);
+    if too_big && confirmed {
         let w = m.windows.get_mut(&wid).unwrap();
         let prev = w.min_size.unwrap_or(Size::ZERO);
         let learned = Size::new(
@@ -534,5 +542,10 @@ pub fn on_frame_applied(
     }
     let e = m.last_sent.get_mut(&wid).unwrap();
     e.attempts = attempts;
-    e.next_retry_ms = Some(m.now_ms + RETRY_BACKOFF_MS[(attempts - 1) as usize]);
+    e.oversize = too_big.then(|| a.size());
+    let mut wait = RETRY_BACKOFF_MS[(attempts - 1) as usize];
+    if too_big {
+        wait = wait.max(MIN_SIZE_CONFIRM_MS);
+    }
+    e.next_retry_ms = Some(m.now_ms + wait);
 }

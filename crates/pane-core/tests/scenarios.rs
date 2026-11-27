@@ -392,6 +392,7 @@ fn min_size_is_learned_without_retry_storm() {
     s.min.insert(WindowId(1), Size::new(1200.0, 500.0));
     s.window(100, 1, "Settings", CENTER);
     s.window(200, 2, "other", CENTER);
+    s.tick(600); // The retry reads the same size: it is a minimum.
     let sets_before = s.sets;
     assert!(s.frame(1).w >= 1200.0);
     let right = s.frame(2);
@@ -406,6 +407,41 @@ fn min_size_is_learned_without_retry_storm() {
 }
 
 #[test]
+fn late_resize_on_retile_is_not_a_min_size() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, &format!("w{i}"), CENTER);
+    }
+    s.focus(100, 3);
+    assert_eq!(s.cmd(Command::ToggleFloat), Reply::ok());
+    let floating = s.frame(3);
+    // Retiling: the first read-back still shows the floating size.
+    s.lagging.push(WindowId(3));
+    assert_eq!(s.cmd(Command::ToggleFloat), Reply::ok());
+    assert!(s.frame(3).w < floating.w);
+    assert_eq!(s.m.windows[&WindowId(3)].min_size, None);
+    s.tick(600);
+    assert_eq!(s.m.windows[&WindowId(3)].min_size, None);
+    assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Tiled);
+    assert!(!s.notices.iter().any(|n| n.contains("Not enough room")));
+}
+
+#[test]
+fn retiling_by_hand_forgets_the_learned_min_size() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "w1", CENTER);
+    s.window(100, 2, "w2", CENTER);
+    s.focus(100, 2);
+    assert_eq!(s.cmd(Command::ToggleFloat), Reply::ok());
+    s.m.windows.get_mut(&WindowId(2)).unwrap().min_size = Some(Size::new(1900.0, 0.0));
+    assert_eq!(s.cmd(Command::ToggleFloat), Reply::ok());
+    assert_eq!(s.m.windows[&WindowId(2)].min_size, None);
+    assert_eq!(s.m.windows[&WindowId(2)].mode, WindowMode::Tiled);
+}
+
+#[test]
 fn too_many_min_sizes_float_newest() {
     let mut s = Sim::new();
     s.launch(100, "a");
@@ -413,6 +449,7 @@ fn too_many_min_sizes_float_newest() {
         s.min.insert(WindowId(i), Size::new(800.0, 400.0));
         s.window(100, i, &format!("w{i}"), CENTER);
     }
+    s.tick(600);
     assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Floating);
     assert_eq!(s.m.windows[&WindowId(1)].mode, WindowMode::Tiled);
     assert!(s.notices.iter().any(|n| n.contains("Not enough room")));
