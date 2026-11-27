@@ -62,6 +62,9 @@ pub struct AppInfo {
     pub unresponsive: bool,
     /// Oldest unanswered SetFrame (unix ms).
     pub awaiting_since: Option<u64>,
+    /// When Pane first saw the app (unix ms).
+    #[serde(skip)]
+    pub launched_ms: u64,
 }
 
 /// The last frame sent for a window and the retry bookkeeping around it.

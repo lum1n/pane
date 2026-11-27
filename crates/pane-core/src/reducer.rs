@@ -41,6 +41,9 @@ const POINTER_FRESH_MS: u64 = 500;
 /// A title-bar drag with no pointer news for this long (a lost mouse-up)
 /// is given up and the window snaps back.
 pub const DRAG_LOST_MS: u64 = 5_000;
+/// An app's windows that open later than this after it launched were
+/// opened by the user in a running app (Settings, a new browser window).
+const LAUNCH_WINDOW_MS: u64 = 10_000;
 
 pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
     // Focus moved by the user through Pane (hotkeys, palette, CLI), not by
@@ -186,6 +189,7 @@ fn reduce_event(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
                     regular,
                     unresponsive: false,
                     awaiting_since: None,
+                    launched_ms: now_ms,
                 },
             );
             fx.push(Effect::Observe { pid });
@@ -551,6 +555,14 @@ fn discover(
     if fresh.is_empty() {
         return;
     }
+    // A window opened in an app that is already running (a Settings window,
+    // a new browser window or profile) must appear where the user is. A
+    // remembered place or profile slot on a hidden workspace would park it
+    // out of sight, and as the app is already frontmost nothing would ever
+    // show that workspace. Windows of an app that is just launching keep
+    // going back to where they were.
+    let in_running_app =
+        !initial && (existing > 0 || m.now_ms.saturating_sub(app.launched_ms) > LAUNCH_WINDOW_MS);
 
     // Windows a previous run left parked.
     let mut restore: BTreeMap<WindowId, Rect> = BTreeMap::new();
@@ -684,7 +696,9 @@ fn discover(
             && d.action == RuleAction::Tile
             && p.role == crate::rules::WindowRole::Standard
         {
-            if let Some((ws, node, slot)) = find_slot_for(m, &app.bundle_id, &p.title) {
+            if let Some((ws, node, slot)) =
+                find_slot_for(m, &app.bundle_id, &p.title, !in_running_app)
+            {
                 if let Some(pos) = m
                     .pending_slots
                     .iter()
@@ -698,30 +712,33 @@ fn discover(
             }
         }
         // 3. A placement record from an earlier run.
-        let record = record_for.get(&i).copied();
-        if target.is_none() {
-            if let Some(ri) = record {
-                let r = m.placements[ri].clone();
+        let mut record = record_for.get(&i).copied();
+        if let Some(ri) = record.filter(|_| target.is_none()) {
+            let r = m.placements[ri].clone();
+            let (home, name) = split_id(&r.workspace);
+            let (home, name) = (home.to_string(), name.to_string());
+            // A record from an older layout may name a display Pane no
+            // longer knows: then use the window's own display.
+            let home = if m.knows_display(&home) {
+                home
+            } else {
+                (if initial && !m.initial_scan_done {
+                    display_for_rect(&m.displays, &p.frame).map(|x| x.id.clone())
+                } else {
+                    None
+                })
+                .or_else(|| m.focused_display())
+                .unwrap_or_default()
+            };
+            if in_running_app && !m.is_visible(&ws_id(&home, &name)) {
+                tracing::info!(wid = %p.wid, workspace = %r.workspace, "new window of a running app: not sent back to a hidden workspace");
+                record = None;
+            } else {
                 why = Some(if r.floating {
                     "remembered placement (floating)"
                 } else {
                     "remembered placement"
                 });
-                let (home, name) = split_id(&r.workspace);
-                let (home, name) = (home.to_string(), name.to_string());
-                // A record from an older layout may name a display Pane no
-                // longer knows: then use the window's own display.
-                let home = if m.knows_display(&home) {
-                    home
-                } else {
-                    (if initial && !m.initial_scan_done {
-                        display_for_rect(&m.displays, &p.frame).map(|x| x.id.clone())
-                    } else {
-                        None
-                    })
-                    .or_else(|| m.focused_display())
-                    .unwrap_or_default()
-                };
                 let ws = m.ensure_workspace(&home, &name);
                 if r.floating {
                     let f = r.float_frame.unwrap_or_else(|| sane_frame(m, &ws));
@@ -1071,10 +1088,13 @@ fn detach_window(m: &mut Model, wid: WindowId, ghost: bool) -> Option<WorkspaceI
 /// An unfilled profile slot for `bundle`: one whose title regex matches
 /// first, preferring a slot whose launch is pending, then visible
 /// workspaces, then any.
+/// With `allow_hidden` false, only slots on a shown workspace or waiting for
+/// a launch Pane asked for qualify.
 fn find_slot_for(
     m: &Model,
     bundle: &str,
     title: &str,
+    allow_hidden: bool,
 ) -> Option<(WorkspaceId, NodeId, crate::tree::AppSlot)> {
     let mut cands: Vec<(u8, WorkspaceId, NodeId, crate::tree::AppSlot)> = Vec::new();
     for w in &m.workspaces {
@@ -1088,8 +1108,11 @@ fn find_slot_for(
                     .pending_slots
                     .iter()
                     .any(|p| p.workspace == w.id && p.bundle_id == bundle);
-                let rank =
-                    (!title_ok as u8) * 4 + (!pending as u8) * 2 + (!m.is_visible(&w.id) as u8);
+                let visible = m.is_visible(&w.id);
+                if !allow_hidden && !visible && !pending {
+                    continue;
+                }
+                let rank = (!title_ok as u8) * 4 + (!pending as u8) * 2 + (!visible as u8);
                 cands.push((rank, w.id.clone(), n, s.clone()));
             }
         }

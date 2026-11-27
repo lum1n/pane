@@ -2818,3 +2818,83 @@ fn undo_is_bound_to_mod_z() {
         .any(|(chord, cmd)| cmd == "undo" && chord.ends_with("-z")));
     assert_eq!(Command::parse("undo"), Ok(Command::Undo));
 }
+
+#[test]
+fn reopened_settings_window_opens_where_you_are() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(200, "com.example.app");
+    s.window(200, 2, "Main", CENTER);
+    // Settings opened on workspace 1, then closed.
+    s.window(200, 3, "Settings", CENTER);
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/1");
+    s.ev(Event::WindowDestroyed {
+        pid: 200,
+        wid: WindowId(3),
+    });
+    // Later, from workspace 2, Settings is opened again (new window id,
+    // same title as the remembered one on hidden workspace 1).
+    s.tick(2000);
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.tick(2000);
+    s.window(200, 4, "Settings", CENTER);
+    assert_eq!(s.m.windows[&WindowId(4)].workspace, "C/2");
+    assert!(s.on_screen(4), "the new window is visible");
+}
+
+#[test]
+fn new_window_of_a_running_app_is_never_parked() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(300, "net.imput.helium");
+    s.window(300, 5, "Profile 1", CENTER);
+    s.ev(Event::WindowDestroyed {
+        pid: 300,
+        wid: WindowId(5),
+    });
+    // The app keeps running without windows; much later a window for
+    // another profile opens while you work on workspace 3.
+    s.tick(60_000);
+    s.cmd(Command::Workspace { name: "3".into() });
+    s.tick(2000);
+    s.window(300, 6, "Profile 2", CENTER);
+    assert_eq!(s.m.windows[&WindowId(6)].workspace, "C/3");
+    assert!(s.on_screen(6));
+}
+
+#[test]
+fn hidden_profile_slot_does_not_take_windows_of_a_running_app() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(200, "com.apple.Safari");
+    s.window(200, 2, "Web", CENTER);
+    let p = pane_core::profile::Profile {
+        name: "work".into(),
+        version: 1,
+        when: None,
+        displays: vec![
+            pane_core::profile::ProfileDisplay {
+                display: "center".into(),
+                workspace: "1".into(),
+                tree: slot("com.apple.Safari"),
+                visible: true,
+            },
+            pane_core::profile::ProfileDisplay {
+                display: "center".into(),
+                workspace: "2".into(),
+                tree: slot("com.apple.Safari"),
+                visible: false,
+            },
+        ],
+    };
+    s.cmd(Command::ProfileApply {
+        name: None,
+        profile: Some(p),
+    });
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "C/1");
+    s.tick(31_000);
+    // A second Safari window: the free slot is on hidden workspace 2.
+    s.window(200, 3, "Settings", CENTER);
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/1");
+    assert!(s.on_screen(3));
+}
