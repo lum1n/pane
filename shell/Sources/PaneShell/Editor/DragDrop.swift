@@ -32,3 +32,16 @@ func dropZone(at p: CGPoint, in size: CGSize) -> String {
     let d: [(String, CGFloat)] = [("left", nx), ("right", 1 - nx), ("up", ny), ("down", 1 - ny)]
     return d.min { $0.1 < $1.1 }!.0
 }
+
+/// Where a drop in `zone` lands inside a tile of `size`: the half it will
+/// take for an edge split, the whole tile for the middle (replace or swap).
+func dropZoneRect(_ zone: String, in size: CGSize) -> CGRect {
+    let w = size.width, h = size.height
+    switch zone {
+    case "left": return CGRect(x: 0, y: 0, width: w / 2, height: h)
+    case "right": return CGRect(x: w / 2, y: 0, width: w / 2, height: h)
+    case "up": return CGRect(x: 0, y: 0, width: w, height: h / 2)
+    case "down": return CGRect(x: 0, y: h / 2, width: w, height: h / 2)
+    default: return CGRect(x: 0, y: 0, width: w, height: h)
+    }
+}

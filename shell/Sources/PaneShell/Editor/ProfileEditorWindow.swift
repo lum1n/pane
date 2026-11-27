@@ -13,15 +13,17 @@ struct TileRef: Equatable, Hashable {
 /// Editor state. Every tree edit is a `profile-edit` round trip to the Rust
 /// core, so the editor and live layouts share one tree implementation.
 @MainActor
-final class EditorModel: ObservableObject {
-    @Published var profile: Profile
-    @Published var snapshot: Snapshot?
-    @Published var selection: TileRef?
-    @Published var status: String?
+@Observable
+final class EditorModel {
+    var profile: Profile
+    var snapshot: Snapshot?
+    var selection: TileRef?
+    /// Transient feedback, shown in a capsule over the canvas.
+    var status: String?
     /// Selected workspace tab per display box (group key -> entry index).
-    @Published var selectedTab: [String: Int] = [:]
+    var selectedTab: [String: Int] = [:]
     /// Shown instead of the canvas while comparing a saved profile with the desk.
-    @Published var diff: ProfileDiff?
+    var diff: ProfileDiff?
     private var undoStack: [Profile] = []
     private var redoStack: [Profile] = []
 
@@ -196,6 +198,19 @@ final class EditorModel: ObservableObject {
         return "horizontal"
     }
 
+    func layout(at t: TileRef) -> String {
+        if case let .container(_, l, _, _)? = profile.display[safe: t.display]?.tree.node(at: t.path) { return l }
+        return "tiles"
+    }
+
+    func setOrientation(_ t: TileRef, _ orientation: String) {
+        guard orientation != self.orientation(at: t) else { return }
+        perform(["op": "set_orientation", "at": t.json, "orientation": orientation])
+    }
+
+    /// Whether the open profile is saved under its name (Compare needs that).
+    var isSaved: Bool { (snapshot?.profiles ?? []).contains(profile.name) }
+
     /// Move the divider between children `i` and `i + 1` of a container.
     func setWeights(container: TileRef, index i: Int, _ a: Double, _ b: Double) {
         guard case let .success(p1) = PaneCore.shared.edit(profile, [
@@ -261,6 +276,7 @@ extension Array {
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
 
+
 @MainActor
 final class ProfileEditorWindow {
     let model = EditorModel()
@@ -269,88 +285,179 @@ final class ProfileEditorWindow {
     func show() {
         if window == nil {
             let host = NSHostingController(rootView: EditorRootView(model: model))
+            // SwiftUI's .toolbar and .navigationTitle drive the NSWindow.
+            host.sceneBridgingOptions = [.toolbars, .title]
             let w = NSWindow(contentViewController: host)
-            w.title = "Pane Profiles"
-            w.setContentSize(NSSize(width: 1180, height: 720))
-            w.styleMask = [.titled, .closable, .resizable, .miniaturizable]
+            w.styleMask = [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView]
+            w.toolbarStyle = .unified
             w.isReleasedWhenClosed = false
+            w.setContentSize(NSSize(width: 1180, height: 720))
             w.center()
+            w.setFrameAutosaveName("PaneProfiles")
+            _ = w.setFrameUsingName("PaneProfiles")
             window = w
             if model.profile.display.isEmpty { model.newProfile() }
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
     }
 }
 
 @MainActor
 struct EditorRootView: View {
-    @ObservedObject var model: EditorModel
-    @State private var name = ""
+    @Bindable var model: EditorModel
+    @State private var inspectorShown = true
+    @State private var renaming = false
 
-    var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            if let d = model.diff {
-                ProfileDiffView(model: model, diff: d)
-            } else {
-                HSplitView {
-                    AppPaletteView()
-                        .frame(minWidth: 200, idealWidth: 230, maxWidth: 320)
-                    DeskCanvasView(model: model)
-                        .frame(minWidth: 500)
-                    InspectorView(model: model)
-                        .frame(minWidth: 220, idealWidth: 250, maxWidth: 320)
-                }
-            }
-            if let s = model.status {
-                Divider()
-                HStack {
-                    Text(s).font(.callout).foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-            }
-        }
-        .frame(minWidth: 960, idealWidth: 1180, minHeight: 560, idealHeight: 720)
-        .onAppear { name = model.profile.name }
-        .onChange(of: model.profile.name) { _, n in name = n }
+    /// The window title is the profile name; editing it renames the profile.
+    private var title: Binding<String> {
+        Binding(get: { model.profile.name }, set: { model.rename($0) })
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 8) {
-            TextField("Profile name", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
-                .onSubmit { model.rename(name) }
-            Menu("Open") {
-                ForEach(model.snapshot?.profiles ?? [], id: \.self) { p in
-                    Button(p) { model.load(p) }
+    var body: some View {
+        NavigationSplitView {
+            AppPaletteView()
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+        } detail: {
+            Group {
+                if let d = model.diff {
+                    ProfileDiffView(model: model, diff: d)
+                } else {
+                    DeskCanvasView(model: model)
                 }
-                if (model.snapshot?.profiles ?? []).isEmpty { Text("No saved profiles") }
             }
-            .frame(width: 80)
-            Button("New") { model.newProfile() }
-            Button("Capture Current") { model.capture() }
-            Button("Compare with Desk") { model.compareWithDesk() }
-                .disabled(!(model.snapshot?.profiles ?? []).contains(model.profile.name))
+            .frame(minWidth: 500)
+            .statusCapsule($model.status)
+            .inspector(isPresented: model.diff == nil ? $inspectorShown : .constant(false)) {
+                InspectorView(model: model)
+                    .inspectorColumnWidth(min: 240, ideal: 270, max: 340)
+            }
+        }
+        .navigationTitle(title)
+        .toolbar { toolbar }
+        .frame(minWidth: 960, minHeight: 560)
+        .sheet(isPresented: $renaming) {
+            RenameSheet(name: model.profile.name) { model.rename($0) }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigation) {
+            Menu {
+                let profiles = model.snapshot?.profiles ?? []
+                if profiles.isEmpty {
+                    Text("No Saved Profiles")
+                } else {
+                    Section("Open") {
+                        ForEach(profiles, id: \.self) { p in
+                            Button(p) { model.load(p) }
+                        }
+                    }
+                }
+                Divider()
+                Button("Rename…") { renaming = true }
+            } label: {
+                Label("Profiles", systemImage: "folder")
+            }
+            .help("Open a saved profile")
+            Button { model.newProfile() } label: { Label("New", systemImage: "plus") }
+                .help("Start a profile for the connected displays")
+            Button { model.capture() } label: { Label("Capture", systemImage: "camera.viewfinder") }
+                .help("Capture the current desk")
+            Button { model.compareWithDesk() } label: { Label("Compare", systemImage: "arrow.left.arrow.right") }
+                .disabled(!model.isSaved || model.diff != nil)
                 .help("Show how the current desk differs from the saved profile, and update it")
-            Divider().frame(height: 18)
-            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+        }
+        ToolbarItemGroup {
+            Button { model.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
                 .disabled(!model.canUndo)
                 .keyboardShortcut("z", modifiers: .command)
-            Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+            Button { model.redo() } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
                 .disabled(!model.canRedo)
                 .keyboardShortcut("z", modifiers: [.command, .shift])
-            Spacer()
-            Button("Save") { model.rename(name); model.save(startup: false) }
-                .keyboardShortcut("s", modifiers: .command)
-            Button("Save as Startup") { model.rename(name); model.save(startup: true) }
-            Button("Apply") { model.apply() }
-                .buttonStyle(.borderedProminent)
         }
-        .padding(10)
+        ToolbarSpacer(.flexible)
+        if model.diff != nil {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button("Cancel") { model.diff = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("Edit Before Saving") { model.editDiff() }
+                    .help("Open the updated profile in the editor without saving it")
+                Button("Update Profile") { model.acceptDiff() }
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        } else {
+            ToolbarItem {
+                Menu {
+                    Section("By Position") {
+                        ForEach(["left", "center", "right", "main"], id: \.self) { r in
+                            Button(r.capitalized) { model.addDisplay(ref: r) }
+                        }
+                    }
+                    if let displays = model.snapshot?.displays, !displays.isEmpty {
+                        Section("Connected") {
+                            ForEach(displays, id: \.id) { d in
+                                Button(d.name) { model.addDisplay(ref: "uuid:\(d.id)") }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Add Display", systemImage: "plus.rectangle.on.rectangle")
+                }
+                .help("Add a display to the profile")
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Menu {
+                    Button("Save as Startup Profile") { model.save(startup: true) }
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                } primaryAction: {
+                    model.save(startup: false)
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .help("Save the profile (⌘S)")
+                Button("Apply") { model.apply() }
+                    .buttonStyle(.glassProminent)
+                    .help("Arrange the desk like this profile")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button { inspectorShown.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
+                    .help(inspectorShown ? "Hide the inspector" : "Show the inspector")
+            }
+        }
+    }
+}
+
+/// Rename the open profile (the editable window title does the same).
+@MainActor
+private struct RenameSheet: View {
+    @State var name: String
+    let onRename: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Rename Profile").font(.headline)
+            TextField("Profile name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(commit)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename", action: commit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func commit() {
+        onRename(name)
+        dismiss()
     }
 }

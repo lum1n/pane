@@ -10,21 +10,9 @@ enum Permissions {
         }
     }
 
-    /// Explain why Pane needs Accessibility and offer to open Settings.
+    /// Explain why Pane needs Accessibility and help turn it on.
     @MainActor
     static func explain() {
-        let a = NSAlert()
-        a.messageText = "Pane needs Accessibility access"
-        a.informativeText = """
-        Pane moves and resizes windows through the macOS Accessibility API. \
-        Turn on Pane in System Settings > Privacy & Security > Accessibility. \
-        Pane starts tiling as soon as access is granted.
-        """
-        a.addButton(withTitle: "Open System Settings")
-        a.addButton(withTitle: "Later")
-        NSApp.activate(ignoringOtherApps: true)
-        if a.runModal() == .alertFirstButtonReturn {
-            openAccessibilitySettings()
-        }
+        WelcomeWindow.shared.show()
     }
 }

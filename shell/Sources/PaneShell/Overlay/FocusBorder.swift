@@ -18,8 +18,8 @@ final class FocusBorder {
     /// Just below the gesture preview (`.statusBar`), above app windows.
     private static let dimLevel = NSWindow.Level.floating
     private static let borderLevel = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
-    /// Approximate corner radius of macOS windows.
-    private static let windowRadius: CGFloat = 10
+    /// Corner radius of macOS windows.
+    private static let windowRadius = UIConstants.windowCornerRadius
 
     func update(_ s: Snapshot) {
         let look = s.appearance ?? SnapAppearance(border_width: 0, border_color: nil, dim_unfocused: 0)
@@ -145,7 +145,7 @@ final class FocusBorder {
 private final class BorderView: NSView {
     var width: CGFloat = 2
     var color: NSColor = .controlAccentColor
-    var radius: CGFloat = 10
+    var radius: CGFloat = UIConstants.windowCornerRadius
 
     override func draw(_ dirtyRect: NSRect) {
         let r = bounds.insetBy(dx: width / 2, dy: width / 2)
