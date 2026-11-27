@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::ScratchpadConfig;
-use crate::geometry::{Direction, Orientation, Rect};
+use crate::geometry::{Direction, Orientation, Point, Rect};
 use crate::gesture::GesturePhase;
 use crate::profile::{Profile, ProfileEdit};
 use crate::stream::EventKind;
@@ -162,6 +162,11 @@ pub enum Command {
     /// the text form; send JSON to test it.
     Gesture {
         phase: GesturePhase,
+    },
+    /// The pointer moved to `at` with no button held (focus follows
+    /// mouse). Not in the text form.
+    Hover {
+        at: Point,
     },
     /// Stream events (`stream::StreamEvent`) as JSON lines after the
     /// `{"status":"ok"}` reply. Only works over the control socket. An empty

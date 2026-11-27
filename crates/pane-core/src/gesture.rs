@@ -96,6 +96,11 @@ impl GestureTracker {
         matches!(self.state, State::Active { .. })
     }
 
+    /// The modifier is held (a gesture may be starting or under way).
+    pub fn is_busy(&self) -> bool {
+        !matches!(self.state, State::Idle)
+    }
+
     /// Forget everything (the tap was re-enabled after a timeout).
     pub fn reset(&mut self) -> Option<GesturePhase> {
         let was_active = self.is_active();

@@ -24,6 +24,8 @@ struct PaneSettings: Codable, Equatable {
     var border_width: Double
     var border_color: String
     var dim_unfocused: Double
+    var mouse_follows_focus: Bool
+    var focus_follows_mouse: Bool
     var menu_bar_app_icons: Bool?
 }
 
@@ -333,6 +335,8 @@ private struct GeneralSettingsView: View {
                     }
                     .onAppear { dim = s.dim_unfocused }
                     .onChange(of: s.dim_unfocused) { _, v in dim = v }
+                    Toggle("Move the pointer to the window you focus with the keyboard", isOn: toggle("mouse_follows_focus") { $0.mouse_follows_focus })
+                    Toggle("Focus the window under the pointer", isOn: toggle("focus_follows_mouse") { $0.focus_follows_mouse })
                 }
                 Section("Menu bar") {
                     Toggle("Show app icons on the tiles", isOn: Binding(

@@ -29,14 +29,32 @@ use crate::{Pid, WindowId, WorkspaceId};
 
 /// Quiet time after a user move before a tiled window snaps back.
 pub const SNAP_BACK_MS: u64 = 300;
+/// Focus follows mouse: how long the pointer must rest over a window
+/// before it gets focus.
+pub const HOVER_FOCUS_MS: u64 = 150;
 /// A tiled window must change size by more than this (points) to count as
 /// an edge drag rather than rounding noise.
 const DRAG_THRESHOLD: f64 = 3.0;
 
 pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
+    // Focus moved by the user through Pane (hotkeys, palette, CLI), not by
+    // the pointer or the OS.
+    let keyboard = matches!(&ev, Event::Command { cmd, .. }
+        if !cmd.is_query() && !matches!(cmd, Command::Gesture { .. } | Command::Hover { .. }));
+    if keyboard {
+        // A pending hover must not undo what the user just chose.
+        m.hover = None;
+    }
+    let before = (m.focus_window, m.focus_display.clone());
     let tiles_before = layout_tile_counts(m);
     let mut fx = reduce_event(m, ev, now_ms);
     keep_layouts(m, &tiles_before, &mut fx);
+    if keyboard
+        && m.config.settings.mouse_follows_focus
+        && (m.focus_window, m.focus_display.clone()) != before
+    {
+        warp_to_focus(m, &mut fx);
+    }
     // Remember when each window had focus (the palette lists by recency).
     if let Some(w) = m.focus_window.filter(|w| m.windows.contains_key(w)) {
         m.focus_seen.insert(w, now_ms);
@@ -46,6 +64,28 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
         m.focus_seen.retain(|w, _| live.contains_key(w));
     }
     fx
+}
+
+/// Mouse follows focus: put the pointer on the focused window, or in the
+/// middle of the focused display when it shows no window.
+fn warp_to_focus(m: &mut Model, fx: &mut Vec<Effect>) {
+    // Frames of a workspace just shown are only known after a layout pass.
+    if m.layout_dirty {
+        fx.extend(reconcile::refresh_desired(m));
+    }
+    let rect = match m.focus_window.and_then(|w| m.windows.get(&w)) {
+        Some(w) => m
+            .desired
+            .get(&w.id)
+            .copied()
+            .or(w.float_frame)
+            .unwrap_or(w.actual),
+        None => match m.focus_display.as_deref().and_then(|d| m.display(d)) {
+            Some(d) => d.visible_frame,
+            None => return,
+        },
+    };
+    fx.push(Effect::WarpPointer { rect });
 }
 
 /// Tile count and master width of every workspace that keeps a layout
@@ -1574,6 +1614,21 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
         }
         m.layout_dirty = true;
     }
+    // Focus follows mouse: the pointer has rested over a window.
+    if let Some((wid, _)) = m.hover.filter(|h| now >= h.1) {
+        m.hover = None;
+        let shown = m
+            .windows
+            .get(&wid)
+            .is_some_and(|w| !w.minimized && m.window_shown(w));
+        if m.config.settings.focus_follows_mouse
+            && m.gesture.is_none()
+            && shown
+            && m.focus_window != Some(wid)
+        {
+            focus_fx(m, wid, fx);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- commands
@@ -1717,6 +1772,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         Command::Doctor => Reply::err("doctor is handled by the runtime"),
         Command::Subscribe { .. } => Reply::err("subscribe works only over the control socket"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
+        Command::Hover { at } => cmd_hover(m, at),
         Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
         Command::Scratchpad { name } => cmd_scratchpad(m, &name, fx),
         Command::Summon { app } => cmd_summon(m, &app, fx),
@@ -2802,7 +2858,11 @@ fn cancel_gesture(m: &mut Model, fx: &mut Vec<Effect>) {
 /// The window drawn at `at` on a visible workspace: floats first (the
 /// focused one first), then a zoomed tile, then tiles.
 fn window_at(m: &Model, at: Point) -> Option<WindowId> {
-    let shown = |wid: &WindowId| m.windows.get(wid).filter(|w| !w.minimized);
+    let shown = |wid: &WindowId| {
+        m.windows
+            .get(wid)
+            .filter(|w| !w.minimized && !m.scratch_hidden.contains(wid))
+    };
     for d in &m.displays {
         let Some(ws) = m.visible_ws(&d.id) else {
             continue;
@@ -2833,6 +2893,18 @@ fn window_at(m: &Model, at: Point) -> Option<WindowId> {
         }
     }
     None
+}
+
+/// The pointer moved: focus the window under it once it rests there for
+/// `HOVER_FOCUS_MS` (each move starts the wait again).
+fn cmd_hover(m: &mut Model, at: Point) -> Reply {
+    m.hover = None;
+    if m.config.settings.focus_follows_mouse && m.gesture.is_none() {
+        m.hover = window_at(m, at)
+            .filter(|w| m.focus_window != Some(*w))
+            .map(|w| (w, m.now_ms + HOVER_FOCUS_MS));
+    }
+    Reply::ok()
 }
 
 fn cmd_gesture(m: &mut Model, phase: GesturePhase, fx: &mut Vec<Effect>) -> Reply {

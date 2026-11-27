@@ -25,6 +25,8 @@ pub trait HotkeyHandle: Send {
     fn update(&self, bindings: &[(Chord, Command)], gesture: Option<Mods>);
     /// While suspended, chords pass through to apps untouched.
     fn set_suspended(&self, suspended: bool);
+    /// Report pointer moves as `Command::Hover` (focus follows mouse).
+    fn set_hover(&self, _on: bool) {}
 }
 
 pub trait Platform: Send + Sync + 'static {
@@ -55,6 +57,8 @@ pub trait Platform: Send + Sync + 'static {
     /// Give keyboard focus to the desktop (Finder) so typing does not go to
     /// a hidden window.
     fn focus_desktop(&self) {}
+    /// Move the pointer to the middle of `rect` unless it is already inside.
+    fn warp_pointer(&self, _rect: Rect) {}
 }
 
 /// The platform of this build.
@@ -135,6 +139,9 @@ pub mod mac {
         fn set_suspended(&self, suspended: bool) {
             self.0.set_suspended(suspended)
         }
+        fn set_hover(&self, on: bool) {
+            self.0.set_hover(on)
+        }
     }
 
     impl Platform for MacPlatform {
@@ -169,6 +176,9 @@ pub mod mac {
         }
         fn focus_desktop(&self) {
             m::apps::activate_finder();
+        }
+        fn warp_pointer(&self, rect: Rect) {
+            m::pointer::warp_into(rect);
         }
         fn sweep_all(&self, known: &[(WindowId, Rect)]) -> usize {
             m::recovery::sweep_all(known)

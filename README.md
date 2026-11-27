@@ -86,6 +86,8 @@ Layout presets arrange a workspace for you. `layout master-stack` puts one large
 
 The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
 
+Two pointer options, both off by default (Settings > General > Focus). `mouse_follows_focus = true` moves the pointer to the middle of the window you focus with a hotkey, the palette or the CLI, also onto another display (or to the middle of an empty display); it stays put if it is already over that window. `focus_follows_mouse = true` focuses the window under the pointer once the pointer has rested there for 150 ms. Only moving the pointer counts: windows that slide under a still pointer (a workspace switch) do not take focus, and neither does anything while you hold the gesture modifier.
+
 The `pane` CLI talks to the running app over a Unix socket:
 
 ```sh

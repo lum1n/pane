@@ -88,6 +88,11 @@ pub struct Settings {
     pub border_color: String,
     /// How much to darken windows that do not have focus (0 = off, 0.8 max).
     pub dim_unfocused: f64,
+    /// Move the pointer to the middle of the window Pane focuses from the
+    /// keyboard (hotkeys, palette, CLI), also onto another display.
+    pub mouse_follows_focus: bool,
+    /// Focus the window under the pointer once it has rested there briefly.
+    pub focus_follows_mouse: bool,
     /// Draw each window's app icon on its tile in the menu bar icon.
     pub menu_bar_app_icons: bool,
     /// Share of the width `layout master-stack` gives the master tile
@@ -124,6 +129,8 @@ impl Default for Settings {
             border_width: 2.0,
             border_color: "accent".into(),
             dim_unfocused: 0.0,
+            mouse_follows_focus: false,
+            focus_follows_mouse: false,
             menu_bar_app_icons: true,
             master_ratio: 0.6,
         }
@@ -1095,6 +1102,10 @@ border_width = 2
 border_color = "accent"
 dim_unfocused = 0
 
+# Move the pointer to the window you focus with the keyboard, and focus the
+# window the pointer rests over.
+mouse_follows_focus = false
+focus_follows_mouse = false
 # Draw each window's app icon on its tile in the menu bar icon.
 menu_bar_app_icons = true
 # Width share of the large tile in `layout master-stack` (0.1 to 0.9).
@@ -1344,6 +1355,22 @@ mod tests {
         ] {
             assert!(Config::parse(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn pointer_focus_settings_default_off() {
+        let c = Config::default();
+        assert!(!c.settings.mouse_follows_focus && !c.settings.focus_follows_mouse);
+        let c =
+            Config::parse("[settings]\nmouse_follows_focus = true\nfocus_follows_mouse = true\n")
+                .unwrap();
+        assert!(c.settings.mouse_follows_focus && c.settings.focus_follows_mouse);
+        assert!(
+            !Config::parse(STARTER_CONFIG)
+                .unwrap()
+                .settings
+                .focus_follows_mouse
+        );
     }
 
     #[test]
