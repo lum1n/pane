@@ -26,6 +26,7 @@ let package = Package(
                 .linkedFramework("ColorSync"),
                 .linkedFramework("Foundation"),
                 .linkedFramework("Security"),
+                .linkedFramework("ServiceManagement"),
             ]
         ),
     ]

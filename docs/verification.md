@@ -118,6 +118,14 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Ctrl-C the subscriber, then switch workspaces: Pane keeps working (no crash from SIGPIPE).
 - [ ] Quit Pane: the subscriber exits with status 0.
 
+## Launch at login and updates
+- [ ] `make install`, open /Applications/Pane.app, Settings > General > Startup and updates: tick **Open Pane at login**. Pane is listed in System Settings > General > Login Items; log out and in: Pane starts.
+- [ ] If macOS shows "needs approval", the orange line and **Open Login Items** appear; allow Pane there and come back to Settings: the toggle is on and the line is gone.
+- [ ] Untick it: Pane leaves Login Items.
+- [ ] **Check for Updates…** in the menu with no newer release: "You're up to date". Offline: "Couldn't check for updates" with the reason.
+- [ ] Set `CFBundleShortVersionString` in the built app's Info.plist below the latest release tag (or `defaults delete com.vegard.pane lastUpdateCheck` with an older build) and relaunch: a notice says the new version is available once, the menu starts with "Pane X Is Available…", and that item opens the release page.
+- [ ] Untick **Check for updates automatically**: no check at launch (`defaults read com.vegard.pane checkForUpdates` is 0).
+
 ## Mouse follows focus, focus follows mouse
 - [ ] With `mouse_follows_focus = true`, `mod-l` to the next tile puts the pointer in its middle; `mod-l` onto the next display (also an empty one) moves the pointer there. The pointer does not stutter after a warp.
 - [ ] The pointer already over the window you focus does not move. Clicking a window or Cmd-Tab never moves the pointer.

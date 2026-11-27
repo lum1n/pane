@@ -250,9 +250,12 @@ struct SettingsView: View {
 @MainActor
 private struct GeneralSettingsView: View {
     @ObservedObject var model: SettingsModel
+    @ObservedObject private var updates = UpdateChecker.shared
     @State private var axGranted = false
     @State private var electron = ""
     @State private var dim = 0.0
+    @State private var login = LaunchAtLogin.State.off
+    @State private var loginError: String?
 
     private var supportDir: URL {
         if let d = ProcessInfo.processInfo.environment["PANE_SUPPORT_DIR"] { return URL(fileURLWithPath: d) }
@@ -373,6 +376,38 @@ private struct GeneralSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("Startup and updates") {
+                Toggle("Open Pane at login", isOn: Binding(
+                    get: { login != .off },
+                    set: { on in
+                        loginError = LaunchAtLogin.set(on)
+                        login = LaunchAtLogin.state
+                    }
+                ))
+                if login == .needsApproval {
+                    HStack {
+                        Label("Allow Pane in Login Items to finish", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Open Login Items") { LaunchAtLogin.openSystemSettings() }
+                    }
+                }
+                if let e = loginError {
+                    Label(e, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                }
+                Toggle("Check for updates automatically", isOn: $updates.automatic)
+                HStack {
+                    Button(updates.checking ? "Checking…" : "Check Now") { updates.check(userInitiated: true) }
+                        .disabled(updates.checking)
+                    if let r = updates.available {
+                        Button("Open Pane \(r.version) Release") {
+                            NSWorkspace.shared.open(URL(string: r.html_url) ?? UpdateChecker.releasesPage)
+                        }
+                    }
+                }
+                Text(updates.status ?? "You have Pane \(AppVersion.current). Updates come from the GitHub releases page; Pane only tells you, it never installs anything.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Configuration file") {
                 LabeledContent("File") {
                     Text(configURL.path).textSelection(.enabled).font(.system(.caption, design: .monospaced))
@@ -405,10 +440,15 @@ private struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .onAppear {
             axGranted = Permissions.accessibilityGranted
+            login = LaunchAtLogin.state
             electron = model.settings?.electron_bundle_ids.joined(separator: ", ") ?? ""
         }
         .onChange(of: model.settings) { _, s in
             electron = s?.electron_bundle_ids.joined(separator: ", ") ?? ""
+        }
+        // Approving in System Settings happens outside Pane; pick it up on return.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            login = LaunchAtLogin.state
         }
     }
 }

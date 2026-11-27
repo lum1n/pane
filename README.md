@@ -132,6 +132,8 @@ done
 
 Settings (gaps, behaviour, startup profile, apps that always float or tile, all hotkeys) are in **Settings…** in the menu. They are stored in `~/Library/Application Support/Pane/config.toml`, which you can also edit by hand; see [docs/config.md](docs/config.md). Displays, workspaces and window rules are edited in the file.
 
+**Settings > General > Startup and updates** turns on **Open Pane at login** (a macOS login item; if macOS asks, allow Pane in System Settings > General > Login Items). Pane also checks the [GitHub releases](https://github.com/lum1n/pane/releases) once a day and, when there is a newer version, shows a notice and a menu item that opens the release page; it never downloads or installs anything. Turn that off there, or check by hand with **Check for Updates…** in the menu. Releases are tagged `vX.Y.Z` and compared with `CFBundleShortVersionString` in `shell/Resources/Info.plist`, so bump that before tagging.
+
 ## Recovery
 
 Windows are never lost:
