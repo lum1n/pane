@@ -1,10 +1,10 @@
 //! The whole window-manager state owned by the core thread.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::Serialize;
 
-use crate::config::{Config, ConfigError};
+use crate::config::{Config, ConfigError, Gaps};
 use crate::display::Display;
 use crate::drop::DropTarget;
 use crate::geometry::{Rect, Size};
@@ -170,6 +170,9 @@ pub struct Model {
     pub auto_topology: Option<String>,
     /// Floating windows from `state.json` waiting to be rediscovered.
     pub expected_floating: BTreeMap<WindowId, (WorkspaceId, Option<Rect>)>,
+    /// Layouts from before the last tree-changing commands, oldest first
+    /// (at most `undo::UNDO_DEPTH`; runtime only, not persisted).
+    pub undo: VecDeque<crate::undo::LayoutState>,
     pub now_ms: u64,
     pub gen: u64,
     pub seq: u64,
@@ -222,6 +225,7 @@ impl Model {
             expected_floating: BTreeMap::new(),
             active_profile: None,
             auto_topology: None,
+            undo: VecDeque::new(),
             now_ms,
             gen: 0,
             seq: 0,
@@ -277,6 +281,7 @@ impl Model {
                 floating: vec![],
                 focused: ws.focused,
                 fullscreen: None,
+                layout: ws.layout,
             });
         }
         let migrate = |map: &BTreeMap<DisplayId, WorkspaceId>| -> BTreeMap<DisplayId, WorkspaceId> {
@@ -336,6 +341,7 @@ impl Model {
                         })
                         .collect(),
                     focused: w.focused,
+                    layout: w.layout,
                 })
                 .collect(),
             visible: self.visible.clone(),
@@ -424,9 +430,15 @@ impl Model {
         self.tree.find_window(self.ws(&w.workspace)?.root, wid)
     }
 
-    /// Tiling area of a display.
+    /// Gaps in effect on a display (`[settings]` with `[[display]]`
+    /// overrides).
+    pub fn gaps(&self, display: &Display) -> Gaps {
+        self.config.gaps_for(display, &self.displays)
+    }
+
+    /// Tiling area of a display: its visible frame less the outer gap.
     pub fn tiling_area(&self, display: &Display) -> Rect {
-        display.visible_frame.inset(self.config.settings.outer_gap)
+        display.visible_frame.inset(self.gaps(display).outer)
     }
 
     pub fn next_gen(&mut self) -> u64 {
@@ -478,6 +490,7 @@ impl Model {
             floating: vec![],
             focused: None,
             fullscreen: None,
+            layout: None,
         });
         id
     }

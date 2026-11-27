@@ -19,11 +19,12 @@ use crate::model::{
     UNRESPONSIVE_AFTER_MS, WATCHDOG_MS,
 };
 use crate::profile::{title_matches, Profile, ProfileDisplay};
-use crate::proto::{Command, QueryKind, Reply, UiRequest};
+use crate::proto::{Command, LayoutPreset, QueryKind, Reply, UiRequest};
 use crate::reconcile;
-use crate::rules::{decide, Decision, RuleAction, WindowTraits};
-use crate::tree::{InsertAt, Leaf, MoveResult, NodeId, SerNode};
-use crate::workspace::{split_id, valid_name, ws_id, Cycle};
+use crate::rules::{decide, Decision, RuleAction, TilePlacement, WindowTraits};
+use crate::tree::{InsertAt, Leaf, MoveResult, NodeId, SerNode, Tree};
+use crate::undo;
+use crate::workspace::{split_id, valid_name, ws_id, Cycle, LayoutMode, MASTER_RATIO_RANGE};
 use crate::{Pid, WindowId, WorkspaceId};
 
 /// Quiet time after a user move before a tiled window snaps back.
@@ -33,7 +34,9 @@ pub const SNAP_BACK_MS: u64 = 300;
 const DRAG_THRESHOLD: f64 = 3.0;
 
 pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
-    let fx = reduce_event(m, ev, now_ms);
+    let tiles_before = layout_tile_counts(m);
+    let mut fx = reduce_event(m, ev, now_ms);
+    keep_layouts(m, &tiles_before, &mut fx);
     // Remember when each window had focus (the palette lists by recency).
     if let Some(w) = m.focus_window.filter(|w| m.windows.contains_key(w)) {
         m.focus_seen.insert(w, now_ms);
@@ -43,6 +46,66 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
         m.focus_seen.retain(|w, _| live.contains_key(w));
     }
     fx
+}
+
+/// Tile count and master width of every workspace that keeps a layout
+/// preset, by root.
+fn layout_tile_counts(m: &Model) -> Vec<(NodeId, usize, Option<f64>)> {
+    m.workspaces
+        .iter()
+        .filter(|w| w.layout.is_some())
+        .map(|w| {
+            (
+                w.root,
+                m.tree.leaves(w.root).len(),
+                m.tree.master_share(w.root),
+            )
+        })
+        .collect()
+}
+
+/// Re-arrange workspaces with a layout preset whose number of tiles changed
+/// (a window opened, closed, moved in or out). Rearranging by hand is left
+/// alone until then.
+fn keep_layouts(m: &mut Model, before: &[(NodeId, usize, Option<f64>)], fx: &mut Vec<Effect>) {
+    let mut changed = false;
+    for i in 0..m.workspaces.len() {
+        let root = m.workspaces[i].root;
+        if m.workspaces[i].layout.is_none() {
+            continue;
+        }
+        let Some((_, n, share)) = before.iter().find(|(r, _, _)| *r == root) else {
+            continue;
+        };
+        if m.tree.leaves(root).len() != *n {
+            arrange(m, i, *share);
+            changed = true;
+        }
+    }
+    if changed {
+        m.layout_dirty = true;
+        if !fx.iter().any(|f| matches!(f, Effect::PersistState)) {
+            fx.push(Effect::PersistState);
+        }
+    }
+}
+
+/// Re-shape workspace `i` into its layout preset. Master-stack keeps
+/// `share`, the master's width before the change, if it had one (the user
+/// may have resized it).
+fn arrange(m: &mut Model, i: usize, share: Option<f64>) {
+    let root = m.workspaces[i].root;
+    match m.workspaces[i].layout {
+        Some(LayoutMode::MasterStack { ratio }) => {
+            let ratio = share
+                .filter(|r| MASTER_RATIO_RANGE.contains(r))
+                .unwrap_or(ratio);
+            m.workspaces[i].layout = Some(LayoutMode::MasterStack { ratio });
+            m.tree.arrange_master_stack(root, ratio);
+        }
+        Some(LayoutMode::Columns { n }) => m.tree.arrange_columns(root, n),
+        None => {}
+    }
 }
 
 fn reduce_event(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
@@ -634,6 +697,7 @@ fn discover(
             }
         }
         // 4. Rules / defaults.
+        let mut placement = TilePlacement::default();
         let (ws, plan) = match target {
             Some(t) => t,
             None => {
@@ -670,7 +734,8 @@ fn discover(
                 let plan = if d.action == RuleAction::Float {
                     Plan::Float(sane_frame(m, &ws))
                 } else {
-                    Plan::Tile(default_insert(m, &ws), None)
+                    placement = d.placement;
+                    Plan::Tile(rule_insert(m, &ws, &placement), None)
                 };
                 (ws, plan)
             }
@@ -711,6 +776,7 @@ fn discover(
                 if let Some(w) = weight {
                     m.tree.set_weight(n, w);
                 }
+                apply_placement(&mut m.tree, n, &placement);
             }
             Plan::Replace(node) => {
                 if let Some(Leaf::Window(old)) = m.tree.leaf(node).cloned() {
@@ -805,6 +871,55 @@ fn default_insert(m: &Model, ws: &str) -> InsertAt {
             InsertAt::After(n)
         }
         _ => InsertAt::End,
+    }
+}
+
+/// Where a new tile goes under a rule's `position` and `orientation`:
+/// an edge of the workspace, a split of the focused tile, or (without
+/// either) where new windows usually go.
+fn rule_insert(m: &Model, ws: &str, p: &TilePlacement) -> InsertAt {
+    let Some(w) = m.ws(ws) else {
+        return InsertAt::End;
+    };
+    if let Some(dir) = p.position.and_then(|pos| pos.edge()) {
+        return InsertAt::Split {
+            target: w.root,
+            dir,
+        };
+    }
+    let Some(o) = p.orientation else {
+        return default_insert(m, ws);
+    };
+    let target = match default_insert(m, ws) {
+        InsertAt::After(n) => n,
+        _ => w.root,
+    };
+    let dir = match o {
+        Orientation::Horizontal => Direction::Right,
+        Orientation::Vertical => Direction::Down,
+    };
+    InsertAt::Split { target, dir }
+}
+
+/// A rule's `layout` and `weight` for the tile `n` just inserted: the
+/// layout of its split, and its share of that split.
+fn apply_placement(tree: &mut Tree, n: NodeId, p: &TilePlacement) {
+    let Some(parent) = tree.parent(n) else { return };
+    if let Some(layout) = p.layout {
+        if let Some(c) = tree.container_mut(parent) {
+            c.layout = layout;
+        }
+    }
+    if let Some(share) = p.weight {
+        let others: f64 = tree
+            .children(parent)
+            .iter()
+            .filter(|c| **c != n)
+            .map(|c| tree.weight_of(*c))
+            .sum();
+        if others > 0.0 {
+            tree.set_weight(n, others * share / (1.0 - share));
+        }
     }
 }
 
@@ -1372,7 +1487,9 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
         .collect();
     for (wid, frame) in due {
         m.drags.remove(&wid);
+        let before = undo::capture(m);
         commit_drag(m, wid, frame);
+        undo::record(m, before);
         // Whether or not the layout changed, the window goes to its tile.
         if let Some(s) = m.last_sent.get_mut(&wid) {
             s.settled = false;
@@ -1470,6 +1587,8 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             | Command::Resize { .. }
             | Command::ToggleOrientation
             | Command::ToggleLayout
+            | Command::Balance
+            | Command::Layout { .. }
     ) {
         if let Some(ws) = m.focused_ws_id() {
             if let Some(w) = m.ws_mut(&ws) {
@@ -1482,6 +1601,24 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
     if m.layout_dirty {
         fx.extend(reconcile::refresh_desired(m));
     }
+    // Tree-changing commands can be undone: keep the layout from before.
+    let undoable = matches!(
+        cmd,
+        Command::Move { .. }
+            | Command::Resize { .. }
+            | Command::MoveToWorkspace { .. }
+            | Command::ToggleOrientation
+            | Command::ToggleLayout
+            | Command::ToggleFloat
+            | Command::ProfileApply {
+                profile: Some(_),
+                ..
+            }
+            | Command::Gesture {
+                phase: GesturePhase::Drop { .. }
+            }
+    );
+    let before = undoable.then(|| undo::capture(m));
     let r = match cmd {
         Command::Focus { dir } => cmd_focus(m, dir, fx),
         Command::Move { dir } => cmd_move(m, dir, fx),
@@ -1538,9 +1675,12 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             fx.push(Effect::PersistState);
             Reply::ok()
         }
+        Command::Balance => cmd_balance(m, fx),
+        Command::Layout { preset } => cmd_layout(m, preset, fx),
         Command::ToggleFloat => cmd_toggle_float(m, fx),
         Command::ToggleFullscreen => cmd_toggle_fullscreen(m, fx),
         Command::SwapWorkspaces => cmd_swap_workspaces(m, fx),
+        Command::Undo => cmd_undo(m, fx),
         Command::Reload => Reply::err("reload is handled by the runtime"),
         Command::ProfilePicker => {
             fx.push(Effect::UiRequest(UiRequest::ProfilePicker));
@@ -1574,6 +1714,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         | Command::ProfileList
         | Command::ProfileWhen { .. } => Reply::err("profile storage is handled by the runtime"),
         Command::Ping => Reply::data(&"pong"),
+        Command::Doctor => Reply::err("doctor is handled by the runtime"),
         Command::Subscribe { .. } => Reply::err("subscribe works only over the control socket"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
         Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
@@ -1587,8 +1728,90 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             Reply::data(&crate::palette::search(m, &query, &profiles))
         }
     };
+    if let Some(before) = before {
+        undo::record(m, before);
+    }
     gc_workspaces(m);
     r
+}
+
+/// Put back the newest layout in the undo ring. One that changes nothing
+/// now (its windows all closed) is skipped.
+fn cmd_undo(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
+    while let Some(prev) = m.undo.pop_back() {
+        let now = undo::capture(m);
+        let focus = undo::restore(m, &prev);
+        if undo::capture(m) == now {
+            continue;
+        }
+        if let Some(w) = focus {
+            focus_fx(m, w, fx);
+        } else if m.focused_window().is_none() {
+            if let Some(w) = m.focused_ws_id().and_then(|ws| first_window(m, &ws)) {
+                focus_fx(m, w, fx);
+            }
+        }
+        m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
+        fx.push(Effect::PersistState);
+        fx.push(Effect::Snapshot);
+        return Reply::ok();
+    }
+    Reply::err("nothing to undo")
+}
+
+/// Equal sizes for the tiles of the focused window's container (the
+/// workspace's top level when no tile has focus).
+fn cmd_balance(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
+    let Some(ws) = m.focused_ws_id() else {
+        return Reply::err("no workspace");
+    };
+    prune_ghosts(m, &ws);
+    let root = m.ws(&ws).unwrap().root;
+    let node = m
+        .focused_window()
+        .and_then(|w| m.tree.find_window(root, w))
+        .unwrap_or(root);
+    if m.tree.balance(node) {
+        m.layout_dirty = true;
+        fx.push(Effect::PersistState);
+    }
+    Reply::ok()
+}
+
+/// Arrange the focused workspace in a preset and remember it, so it
+/// re-shapes as tiles come and go; `manual` forgets it.
+fn cmd_layout(m: &mut Model, preset: LayoutPreset, fx: &mut Vec<Effect>) -> Reply {
+    let Some(ws) = m.focused_ws_id() else {
+        return Reply::err("no workspace");
+    };
+    let mode = match preset {
+        LayoutPreset::MasterStack { ratio } => {
+            let ratio = ratio.unwrap_or(m.config.settings.master_ratio);
+            if !MASTER_RATIO_RANGE.contains(&ratio) {
+                return Reply::err("master ratio must be between 0.1 and 0.9");
+            }
+            Some(LayoutMode::MasterStack { ratio })
+        }
+        LayoutPreset::Columns { n } => {
+            if !(1..=crate::workspace::MAX_COLUMNS).contains(&n) {
+                return Reply::err(format!(
+                    "columns must be 1 to {}",
+                    crate::workspace::MAX_COLUMNS
+                ));
+            }
+            Some(LayoutMode::Columns { n })
+        }
+        LayoutPreset::Manual => None,
+    };
+    prune_ghosts(m, &ws);
+    let i = m.workspaces.iter().position(|w| w.id == ws).unwrap();
+    m.workspaces[i].layout = mode;
+    if mode.is_some() {
+        arrange(m, i, None);
+        m.layout_dirty = true;
+    }
+    fx.push(Effect::PersistState);
+    Reply::ok()
 }
 
 /// Jump to a window from the palette: show its workspace where it is,
@@ -2184,6 +2407,9 @@ pub struct WorkspaceSummary {
     pub visible: bool,
     pub windows: usize,
     pub focused: Option<WindowId>,
+    /// Layout preset the workspace keeps, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<LayoutMode>,
 }
 
 fn query(m: &Model, what: QueryKind) -> Reply {
@@ -2247,6 +2473,7 @@ fn query(m: &Model, what: QueryKind) -> Reply {
                         .count()
                         + w.floating.len(),
                     focused: w.focused,
+                    layout: w.layout,
                 })
                 .collect();
             Reply::data(&v)
@@ -2436,6 +2663,8 @@ pub fn apply_profile(m: &mut Model, p: &Profile, fx: &mut Vec<Effect>) -> Reply 
             m.ghosts.remove(&w);
         }
         m.tree.fill_from_ser(root, &pd.tree);
+        // The profile's own shape replaces any layout preset.
+        m.ws_mut(&ws).unwrap().layout = None;
         targets.push((ws, orphans));
     }
     // Match running windows to slots: same workspace and title first.

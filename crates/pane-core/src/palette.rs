@@ -268,7 +268,17 @@ fn profile_items(m: &Model, profiles: &[String]) -> Vec<PaletteItem> {
 }
 
 /// Commands that make sense without a shortcut, besides the bound ones.
-const EXTRA_COMMANDS: &[&str] = &["open-editor", "recover", "toggle-fullscreen", "reload"];
+const EXTRA_COMMANDS: &[&str] = &[
+    "open-editor",
+    "recover",
+    "toggle-fullscreen",
+    "reload",
+    "balance",
+    "layout master-stack",
+    "layout columns 2",
+    "layout columns 3",
+    "layout manual",
+];
 
 /// `with_summon` adds a `summon APP` item per app with a window; plain
 /// searches leave them out so the window itself stays the top hit.
@@ -329,6 +339,19 @@ fn humanize(text: &str) -> String {
         "recover" => Some("Recover hidden windows".to_string()),
         "reload" => Some("Reload config".to_string()),
         "profile-picker" => Some("Show profile picker".to_string()),
+        "balance" => Some("Balance tile sizes".to_string()),
+        "layout" => {
+            let mut words = text.split_whitespace().skip(1);
+            Some(match (words.next(), words.next()) {
+                (Some("master-stack" | "master"), None) => "Layout: master and stack".to_string(),
+                (Some("master-stack" | "master"), Some(pct)) => {
+                    format!("Layout: master and stack ({pct}%)")
+                }
+                (Some("columns"), Some(n)) => format!("Layout: {n} columns"),
+                (Some("manual" | "off"), _) => "Layout: manual (stop re-arranging)".to_string(),
+                _ => "Layout".to_string(),
+            })
+        }
         "scratchpad" => Some(format!(
             "Toggle scratchpad {}",
             text.split_whitespace().nth(1).unwrap_or("")
@@ -374,6 +397,9 @@ mod tests {
         assert_eq!(humanize("move-to-workspace 3"), "Move to workspace 3");
         assert_eq!(humanize("toggle-float"), "Toggle float");
         assert_eq!(humanize("open-editor"), "Open profile editor");
+        assert_eq!(humanize("balance"), "Balance tile sizes");
+        assert_eq!(humanize("layout master-stack"), "Layout: master and stack");
+        assert_eq!(humanize("layout columns 3"), "Layout: 3 columns");
         assert_eq!(
             humanize("summon Visual Studio Code"),
             "Summon Visual Studio Code"

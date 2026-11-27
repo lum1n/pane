@@ -62,6 +62,9 @@ pub struct WorkspaceState {
     pub floating: Vec<FloatingState>,
     #[serde(default)]
     pub focused: Option<WindowId>,
+    /// Layout preset the workspace keeps (`layout master-stack`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<crate::workspace::LayoutMode>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

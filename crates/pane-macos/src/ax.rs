@@ -262,3 +262,9 @@ pub fn is_trusted(prompt: bool) -> bool {
         AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef()) != 0
     }
 }
+
+/// Is this process allowed Input Monitoring (listening to key events)?
+/// Never prompts.
+pub fn input_monitoring() -> bool {
+    unsafe { CGPreflightListenEventAccess() }
+}

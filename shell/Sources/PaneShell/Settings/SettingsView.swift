@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct PaneSettings: Codable, Equatable {
     var inner_gap: Double
     var outer_gap: Double
+    var smart_gaps: Bool
     var default_layout: String
     var placement_memory_days: Int
     var restore_placements: Bool
@@ -298,6 +299,7 @@ private struct GeneralSettingsView: View {
                 Section("Layout") {
                     TextField("Gap between windows", value: number("inner_gap") { $0.inner_gap }, format: .number)
                     TextField("Gap at screen edges", value: number("outer_gap") { $0.outer_gap }, format: .number)
+                    Toggle("No gaps when a workspace shows one tile", isOn: toggle("smart_gaps") { $0.smart_gaps })
                     Picker("New containers", selection: Binding(
                         get: { s.default_layout },
                         set: { model.set("default_layout", $0) }

@@ -278,6 +278,33 @@ fn tiles_on_focused_display_and_relayouts_on_close() {
 }
 
 #[test]
+fn smart_and_per_display_gaps() {
+    let c = Config::parse(
+        "[settings]\ninner_gap = 6\nouter_gap = 6\nsmart_gaps = true\n\
+         [[display]]\nname = \"middle\"\nposition = \"center\"\ninner_gap = 20\nouter_gap = 10\n",
+    )
+    .unwrap();
+    let mut s = Sim::with(Model::new(c, 1_000_000));
+    s.launch(100, "com.apple.Terminal");
+    // One tile on the centre display fills its visible frame.
+    s.window(100, 1, "term 1", CENTER);
+    assert_eq!(s.frame(1), Rect::new(0.0, 30.0, 1920.0, 1050.0));
+    // A second tile brings back the centre display's own gaps.
+    s.window(100, 2, "term 2", CENTER);
+    assert_eq!(s.frame(1).x, 10.0);
+    assert_eq!(s.frame(1).y, 40.0);
+    assert_eq!(s.frame(1).h, 1030.0);
+    assert_eq!(s.frame(2).x - s.frame(1).max_x(), 20.0);
+    assert_eq!(s.frame(2).max_x(), 1910.0);
+    // Closing one drops the gaps again.
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(2),
+    });
+    assert_eq!(s.frame(1), Rect::new(0.0, 30.0, 1920.0, 1050.0));
+}
+
+#[test]
 fn dialogs_float_and_keep_their_frame() {
     let mut s = Sim::new();
     s.launch(100, "com.apple.TextEdit");
@@ -1951,4 +1978,487 @@ fn workspace_names_show_in_snapshot_and_palette() {
         "{}",
         items[0].subtitle
     );
+}
+
+fn layout(s: &mut Sim, text: &str) {
+    let c = Command::parse(text).unwrap();
+    assert!(matches!(s.cmd(c), Reply::Ok { .. }), "{text}");
+}
+
+fn share(s: &Sim, a: u32, b: u32) -> f64 {
+    s.frame(a).w / (s.frame(a).w + s.frame(b).w)
+}
+
+#[test]
+fn balance_evens_out_the_focused_container() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, "w", CENTER);
+    }
+    s.focus(100, 1);
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Horizontal,
+        delta: 0.2,
+    });
+    assert!(s.frame(1).w > s.frame(2).w + 100.0);
+    s.cmd(Command::Balance);
+    let w: Vec<f64> = (1..=3).map(|i| s.frame(i).w).collect();
+    assert!(w.iter().all(|x| (x - w[0]).abs() <= 1.0), "{w:?}");
+    // Only the focused container: a nested split stays as it is.
+    s.focus(100, 3);
+    s.cmd(Command::Move {
+        dir: Direction::Down,
+    });
+    assert_eq!(s.frame(3).w, 1908.0, "3 is a full-width row now");
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Vertical,
+        delta: 0.2,
+    });
+    s.focus(100, 1);
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Horizontal,
+        delta: 0.1,
+    });
+    let tall = s.frame(3).h;
+    s.cmd(Command::Balance);
+    assert!((s.frame(1).w - s.frame(2).w).abs() <= 1.0);
+    assert_eq!(s.frame(3).h, tall, "the outer split keeps its sizes");
+}
+
+#[test]
+fn master_stack_reshapes_as_windows_come_and_go() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    s.window(100, 1, "one", CENTER);
+    s.focus(100, 1);
+    layout(&mut s, "layout master-stack");
+    assert_eq!(s.frame(1).w, 1908.0, "alone it fills the display");
+    s.window(100, 2, "two", CENTER);
+    assert!((share(&s, 1, 2) - 0.6).abs() < 0.01, "default master_ratio");
+    s.window(100, 3, "three", CENTER);
+    s.window(100, 4, "four", CENTER);
+    // 1 stays the master; the others stack on the right, full height shared.
+    assert!((share(&s, 1, 2) - 0.6).abs() < 0.01);
+    assert_eq!(s.frame(1).h, 1038.0);
+    let stack: Vec<Rect> = (2..=4).map(|i| s.frame(i)).collect();
+    assert!(stack.iter().all(|r| r.x == stack[0].x && r.w == stack[0].w));
+    assert!(stack.iter().all(|r| r.h < 400.0), "{stack:?}");
+    assert!(stack[0].x > s.frame(1).x + s.frame(1).w);
+
+    // Closing the master promotes the first stacked window.
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    let ms = s.m.ws("C/1").unwrap();
+    let first = s.m.tree.windows(ms.root)[0];
+    assert_eq!(s.frame(first.0).h, 1038.0);
+    let other = (2..=4).find(|i| *i != first.0).unwrap();
+    assert!((share(&s, first.0, other) - 0.6).abs() < 0.01);
+
+    // A master widened by hand keeps its width when a window opens.
+    s.focus(100, first.0);
+    s.cmd(Command::Resize {
+        axis: pane_core::geometry::Orientation::Horizontal,
+        delta: 0.1,
+    });
+    s.window(100, 5, "five", CENTER);
+    assert!((share(&s, first.0, 5) - 0.7).abs() < 0.01);
+
+    // Kept across a restart.
+    let state: pane_core::state::State =
+        serde_json::from_str(&serde_json::to_string(&s.m.to_state()).unwrap()).unwrap();
+    let m2 = Model::from_state(Config::default(), &state, s.now);
+    assert!(matches!(
+        m2.ws("C/1").unwrap().layout,
+        Some(pane_core::workspace::LayoutMode::MasterStack { .. })
+    ));
+
+    // An explicit size wins; `manual` stops re-shaping.
+    layout(&mut s, "layout master-stack 50");
+    assert!((share(&s, first.0, 5) - 0.5).abs() < 0.01);
+    layout(&mut s, "layout manual");
+    assert!(s.m.ws("C/1").unwrap().layout.is_none());
+    s.focus(100, first.0);
+    s.window(100, 6, "six", CENTER);
+    assert!(
+        s.frame(6).h > 1000.0,
+        "inserted next to the master, unshaped"
+    );
+}
+
+#[test]
+fn columns_layout_spreads_tiles_and_keeps_n_columns() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    for i in 1..=5 {
+        s.window(100, i, "w", CENTER);
+    }
+    s.focus(100, 1);
+    layout(&mut s, "layout columns 3");
+    let xs: std::collections::BTreeSet<i64> =
+        (1..=5).map(|i| s.frame(i).x.round() as i64).collect();
+    assert_eq!(xs.len(), 3, "three columns");
+    let w: Vec<f64> = (1..=5).map(|i| s.frame(i).w).collect();
+    assert!(
+        w.iter().all(|x| (x - w[0]).abs() <= 1.0),
+        "equal widths {w:?}"
+    );
+    // 2 + 2 + 1: the last column is a single full-height tile.
+    assert_eq!(s.frame(5).h, 1038.0);
+    assert!(s.frame(1).h < 600.0);
+    s.window(100, 6, "w", CENTER);
+    let xs: std::collections::BTreeSet<i64> =
+        (1..=6).map(|i| s.frame(i).x.round() as i64).collect();
+    assert_eq!(xs.len(), 3, "still three columns");
+    assert!((1..=6).all(|i| s.frame(i).h < 600.0), "2 + 2 + 2");
+    // Fewer windows than columns: one column each.
+    for i in 3..=6 {
+        s.ev(Event::WindowDestroyed {
+            pid: 100,
+            wid: WindowId(i),
+        });
+    }
+    assert_eq!(s.frame(1).h, 1038.0);
+    assert!((s.frame(1).w - s.frame(2).w).abs() <= 1.0);
+
+    // Applying a profile replaces the preset with the profile's shape.
+    let p = pane_core::profile::Profile {
+        name: "p".into(),
+        version: 1,
+        when: None,
+        displays: vec![pane_core::profile::ProfileDisplay {
+            display: "center".into(),
+            workspace: "1".into(),
+            tree: slot("a"),
+            visible: true,
+        }],
+    };
+    s.cmd(Command::ProfileApply {
+        name: None,
+        profile: Some(p),
+    });
+    assert!(s.m.ws("C/1").unwrap().layout.is_none());
+}
+
+#[test]
+fn layout_commands_are_in_the_palette() {
+    let mut s = Sim::new();
+    let items = search(&mut s, ">layout");
+    let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+    assert!(titles.contains(&"Layout: master and stack"), "{titles:?}");
+    assert!(titles.contains(&"Layout: 3 columns"), "{titles:?}");
+    let items = search(&mut s, ">balance");
+    assert_eq!(items[0].command, Command::Balance);
+}
+
+fn with_rules(toml: &str) -> Sim {
+    Sim::with(Model::new(Config::parse(toml).unwrap(), 1_000_000))
+}
+
+#[test]
+fn rule_puts_terminals_in_a_narrow_right_column() {
+    let mut s =
+        with_rules("[[rule]]\napp = \"com.apple.Terminal\"\nposition = \"right\"\nweight = 0.25\n");
+    s.launch(100, "com.apple.TextEdit");
+    s.window(100, 1, "a", CENTER);
+    s.window(100, 2, "b", CENTER);
+    s.focus(100, 2);
+    // b is stacked under a, so the root is a column of two.
+    s.cmd(Command::ToggleOrientation);
+    assert_eq!(s.frame(1).w, 1908.0);
+    s.launch(200, "com.apple.Terminal");
+    s.window(200, 10, "term", CENTER);
+    let area = Rect::new(6.0, 36.0, 1908.0, 1038.0);
+    let t = s.frame(10);
+    assert!((t.max_x() - area.max_x()).abs() <= 1.0, "at the right edge");
+    assert_eq!(t.h, area.h, "full height");
+    let share = (t.w + 3.0) / (area.w + 6.0);
+    assert!(
+        (share - 0.25).abs() < 0.01,
+        "a quarter of the width: {share}"
+    );
+    // The other windows stay stacked to its left.
+    assert_eq!(s.frame(1).x, area.x);
+    assert!(s.frame(2).y > s.frame(1).y);
+    assert!(s.frame(1).max_x() < t.x);
+}
+
+#[test]
+fn rule_splits_the_focused_tile_and_sets_its_layout() {
+    let mut s = with_rules(
+        "[[rule]]\napp = \"com.apple.Terminal\"\norientation = \"vertical\"\nweight = 0.3\n\
+         [[rule]]\napp = \"org.mozilla.firefox\"\nlayout = \"accordion\"\n",
+    );
+    s.launch(100, "com.apple.TextEdit");
+    s.window(100, 1, "a", CENTER);
+    s.window(100, 2, "b", CENTER);
+    s.focus(100, 2);
+    s.launch(200, "com.apple.Terminal");
+    s.window(200, 10, "term", CENTER);
+    // Stacked under b, taking 30% of b's column.
+    assert_eq!(s.frame(10).x, s.frame(2).x);
+    assert_eq!(s.frame(10).w, s.frame(2).w);
+    assert!(s.frame(10).y > s.frame(2).y);
+    let share = s.frame(10).h / (s.frame(10).h + s.frame(2).h);
+    assert!((share - 0.3).abs() < 0.01, "{share}");
+    assert_eq!(s.frame(1).h, 1038.0, "a keeps its full height");
+
+    // A layout rule changes the split the window lands in.
+    let ws = s.m.windows[&WindowId(1)].workspace.clone();
+    s.focus(100, 1);
+    s.launch(300, "org.mozilla.firefox");
+    s.window(300, 20, "web", CENTER);
+    let n = s.m.window_node(WindowId(20)).unwrap();
+    let parent = s.m.tree.parent(n).unwrap();
+    assert_eq!(parent, s.m.ws(&ws).unwrap().root);
+    assert_eq!(
+        s.m.tree.container(parent).unwrap().layout,
+        pane_core::tree::ContainerLayout::Accordion
+    );
+}
+
+#[test]
+fn rule_layout_applies_only_the_first_time() {
+    let cfg = "[[rule]]\napp = \"com.apple.Terminal\"\nposition = \"left\"\nweight = 0.2\n";
+    let mut s = with_rules(cfg);
+    s.launch(100, "com.apple.TextEdit");
+    s.window(100, 1, "a", CENTER);
+    s.launch(200, "com.apple.Terminal");
+    s.window(200, 10, "term", CENTER);
+    assert_eq!(s.frame(10).x, 6.0);
+    assert!(s.frame(10).w < s.frame(1).w);
+    // The user moves it; a relaunch brings it back where the user left it.
+    s.focus(200, 10);
+    s.cmd(Command::Move {
+        dir: Direction::Right,
+    });
+    assert!(s.frame(10).x > s.frame(1).x);
+    s.ev(Event::AppTerminated { pid: 200 });
+    s.launch(201, "com.apple.Terminal");
+    s.window(201, 11, "term", CENTER);
+    assert!(
+        s.frame(11).x > s.frame(1).x,
+        "remembered, not the rule's edge"
+    );
+}
+
+// ---------------------------------------------------------------- undo
+
+fn frames(s: &Sim, wids: &[u32]) -> Vec<Rect> {
+    wids.iter().map(|w| s.frame(*w)).collect()
+}
+
+fn undo(s: &mut Sim) -> Reply {
+    s.cmd(Command::Undo)
+}
+
+fn three_tiles() -> Sim {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, "w", CENTER);
+    }
+    s.focus(100, 3);
+    s
+}
+
+#[test]
+fn undo_reverts_moves_resizes_and_toggles_one_at_a_time() {
+    let mut s = three_tiles();
+    assert!(matches!(undo(&mut s), Reply::Error { .. }), "nothing yet");
+    let start = frames(&s, &[1, 2, 3]);
+
+    s.cmd(Command::Move {
+        dir: Direction::Left,
+    });
+    let moved = frames(&s, &[1, 2, 3]);
+    assert_ne!(moved, start);
+    s.cmd(Command::Resize {
+        axis: pane_core::Orientation::Horizontal,
+        delta: 0.1,
+    });
+    let resized = frames(&s, &[1, 2, 3]);
+    assert_ne!(resized, moved);
+    s.cmd(Command::ToggleOrientation);
+    assert_ne!(frames(&s, &[1, 2, 3]), resized);
+    // Focus changes alone are not layout changes.
+    s.cmd(Command::Focus { dir: Direction::Up });
+    assert_eq!(s.m.undo.len(), 3);
+
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(frames(&s, &[1, 2, 3]), resized);
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(frames(&s, &[1, 2, 3]), moved);
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+    assert_eq!(s.m.focused_window(), Some(WindowId(3)));
+    assert!(matches!(undo(&mut s), Reply::Error { .. }));
+}
+
+#[test]
+fn undo_brings_a_window_back_from_another_workspace() {
+    let mut s = three_tiles();
+    let start = frames(&s, &[1, 2, 3]);
+    let home = s.m.windows[&WindowId(3)].workspace.clone();
+    s.cmd(Command::MoveToWorkspace { name: "7".into() });
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/7");
+    assert!(!s.on_screen(3));
+
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, home);
+    assert!(s.on_screen(3));
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+    assert_eq!(s.m.focused_window(), Some(WindowId(3)));
+    assert!(s.m.ws("C/7").is_none(), "the emptied workspace is dropped");
+
+    // Across a display edge too.
+    s.cmd(Command::Move {
+        dir: Direction::Right,
+    });
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "R/1");
+    undo(&mut s);
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, home);
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+    assert_eq!(s.m.focus_display.as_deref(), Some("C"));
+}
+
+#[test]
+fn undo_reverts_a_gesture_swap_and_an_edge_drag() {
+    let mut s = two_tiles();
+    s.tick(2000);
+    let (a, b) = (s.frame(1), s.frame(2));
+    s.gesture(1, a.center(), b.center());
+    assert_eq!((s.frame(1), s.frame(2)), (b, a));
+    undo(&mut s);
+    assert_eq!((s.frame(1), s.frame(2)), (a, b));
+
+    drag_to(&mut s, 1, Rect::new(a.x, a.y, a.w + 100.0, a.h));
+    assert!((s.frame(1).w - (a.w + 100.0)).abs() <= 2.0);
+    undo(&mut s);
+    assert_eq!((s.frame(1), s.frame(2)), (a, b));
+}
+
+#[test]
+fn undo_reverts_toggle_float() {
+    let mut s = three_tiles();
+    let start = frames(&s, &[1, 2, 3]);
+    s.cmd(Command::ToggleFloat);
+    assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Floating);
+    undo(&mut s);
+    assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Tiled);
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+}
+
+#[test]
+fn undo_reverts_a_profile_apply() {
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(200, "com.apple.Safari");
+    s.window(200, 2, "Web", CENTER);
+    let full = s.frame(2);
+    let p = pane_core::profile::Profile {
+        name: "work".into(),
+        version: 1,
+        when: None,
+        displays: vec![pane_core::profile::ProfileDisplay {
+            display: "center".into(),
+            workspace: "3".into(),
+            tree: two_up("com.apple.mail", "com.apple.Safari"),
+            visible: true,
+        }],
+    };
+    s.cmd(Command::ProfileApply {
+        name: None,
+        profile: Some(p),
+    });
+    assert_eq!(s.m.active_profile.as_deref(), Some("work"));
+    assert_eq!(s.m.visible["C"], "C/3");
+    assert!(s.frame(2).w < 1000.0);
+
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(s.m.active_profile, None);
+    assert_eq!(s.m.visible["C"], "C/1");
+    assert_eq!(s.m.windows[&WindowId(2)].workspace, "C/1");
+    assert_eq!(s.m.windows[&WindowId(2)].slot, None);
+    assert_eq!(s.frame(2), full);
+    // Mail arriving later no longer has a slot to fill: it just tiles.
+    s.launch(300, "com.apple.mail");
+    s.window(300, 3, "Inbox", CENTER);
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "C/1");
+}
+
+#[test]
+fn undo_keeps_windows_opened_since_and_skips_closed_ones() {
+    let mut s = three_tiles();
+    s.cmd(Command::Move {
+        dir: Direction::Left,
+    });
+    s.window(100, 4, "new", CENTER);
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    undo(&mut s);
+    let ws = s.m.windows[&WindowId(2)].workspace.clone();
+    let root = s.m.ws(&ws).unwrap().root;
+    assert_eq!(
+        s.m.tree.windows(root),
+        vec![WindowId(2), WindowId(3), WindowId(4)],
+        "old order, the new window kept at the end, the closed one gone"
+    );
+    for w in [2, 3, 4] {
+        assert!(s.on_screen(w));
+    }
+
+    // A layout whose windows have all closed changes nothing: skipped.
+    let mut s = three_tiles();
+    s.cmd(Command::MoveToWorkspace { name: "7".into() });
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(3),
+    });
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(2),
+    });
+    s.tick(11 * 60 * 1000);
+    assert!(matches!(undo(&mut s), Reply::Error { .. }));
+}
+
+#[test]
+fn undo_keeps_the_last_twenty_layouts() {
+    let mut s = three_tiles();
+    let mut seen = vec![frames(&s, &[1, 2, 3])];
+    for i in 0..25 {
+        let delta = if i % 2 == 0 { 0.02 } else { -0.01 };
+        s.cmd(Command::Resize {
+            axis: pane_core::Orientation::Horizontal,
+            delta,
+        });
+        seen.push(frames(&s, &[1, 2, 3]));
+    }
+    assert_eq!(s.m.undo.len(), pane_core::undo::UNDO_DEPTH);
+    for i in 0..20 {
+        assert_eq!(undo(&mut s), Reply::ok());
+        assert_eq!(frames(&s, &[1, 2, 3]), seen[24 - i]);
+    }
+    assert!(matches!(undo(&mut s), Reply::Error { .. }));
+}
+
+#[test]
+fn undo_is_bound_to_mod_z() {
+    let c = Config::default();
+    let base = c.modifier().unwrap();
+    assert!(c
+        .default_bindings(&base)
+        .iter()
+        .any(|(chord, cmd)| cmd == "undo" && chord.ends_with("-z")));
+    assert_eq!(Command::parse("undo"), Ok(Command::Undo));
 }
