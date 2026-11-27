@@ -2129,6 +2129,11 @@ fn cmd_move(m: &mut Model, dir: Direction, fx: &mut Vec<Effect>) -> Reply {
 }
 
 fn cmd_resize(m: &mut Model, axis: Orientation, delta: f64) -> Reply {
+    // A NaN would make every weight in the split NaN (and state.json
+    // unreadable: serde_json writes NaN as null).
+    if !delta.is_finite() {
+        return Reply::err("bad resize amount");
+    }
     let Some(wid) = m.focused_window() else {
         return Reply::err("no focused window");
     };

@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{Model, WindowMode};
 use crate::tree::{AppSlot, Leaf, SerNode};
+use crate::workspace::LayoutMode;
 use crate::{DisplayId, Rect, WindowId, WorkspaceId};
 
 /// How many layouts `undo` can go back.
@@ -24,6 +25,7 @@ pub struct WsLayout {
     pub tree: SerNode,
     pub floating: Vec<WindowId>,
     pub focused: Option<WindowId>,
+    pub layout: Option<LayoutMode>,
 }
 
 /// Where a window was.
@@ -58,6 +60,7 @@ pub fn capture(m: &Model) -> LayoutState {
                 tree: m.tree.to_ser(w.root),
                 floating: w.floating.clone(),
                 focused: w.focused,
+                layout: w.layout,
             })
             .collect(),
         windows: m
@@ -158,6 +161,12 @@ pub fn restore(m: &mut Model, s: &LayoutState) -> Option<WindowId> {
         placed.extend(floating.iter().copied());
         restored.push((wl, tree, floating));
     }
+    // Trees as they are now: a workspace the undo leaves as it is keeps its
+    // zoomed window.
+    let trees_now: BTreeMap<WorkspaceId, SerNode> = restored
+        .iter()
+        .filter_map(|(wl, _, _)| Some((wl.id.clone(), m.tree.to_ser(m.ws(&wl.id)?.root))))
+        .collect();
     // Take the restored windows out of wherever they are now. Workspaces
     // made since (by the command undone) also lose their profile slots.
     let known: BTreeSet<WorkspaceId> = s.workspaces.iter().map(|w| w.id.clone()).collect();
@@ -192,7 +201,12 @@ pub fn restore(m: &mut Model, s: &LayoutState) -> Option<WindowId> {
         ws.floating = floating.clone();
         ws.floating.extend(extra_floating);
         ws.focused = wl.focused.filter(|w| placed.contains(w));
-        ws.fullscreen = None;
+        ws.layout = wl.layout;
+        let ws = m.ws(&wl.id).unwrap();
+        let unchanged = trees_now.get(&wl.id) == Some(&m.tree.to_ser(ws.root));
+        if !unchanged {
+            m.ws_mut(&wl.id).unwrap().fullscreen = None;
+        }
     }
     for (wid, wl) in &s.windows {
         if !placed.contains(wid) {

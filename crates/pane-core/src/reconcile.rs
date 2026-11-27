@@ -474,8 +474,9 @@ pub fn on_frame_applied(
     // Larger than asked: the app may have a minimum size, or it applies the
     // resize late and this is still its old size. Once a retry reads the
     // same size, remember it and let the layout give the space to a
-    // neighbour. Until then it is retried like any other miss.
-    let too_big = !parked && (a.w > d.w + 2.0 || a.h > d.h + 2.0);
+    // neighbour. Until then it is retried like any other miss. Without a
+    // read-back `a` is the frame from before, which proves nothing.
+    let too_big = !parked && actual.is_some() && (a.w > d.w + 2.0 || a.h > d.h + 2.0);
     let confirmed = s
         .oversize
         .is_some_and(|o| (a.w - o.w).abs() <= 2.0 && (a.h - o.h).abs() <= 2.0);

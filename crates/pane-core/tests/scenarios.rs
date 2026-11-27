@@ -428,6 +428,27 @@ fn late_resize_on_retile_is_not_a_min_size() {
 }
 
 #[test]
+fn missing_read_back_is_not_a_min_size() {
+    let mut s = Sim::new();
+    s.launch(100, "a");
+    for i in 1..=3 {
+        s.window(100, i, &format!("w{i}"), CENTER);
+    }
+    s.focus(100, 3);
+    assert_eq!(s.cmd(Command::ToggleFloat), Reply::ok());
+    // Retiling while the window can't be read back: the only frame Pane
+    // knows is the old floating one, which is no evidence of a minimum.
+    s.no_readback = true;
+    s.report_errors = true;
+    assert_eq!(s.cmd(Command::ToggleFloat), Reply::ok());
+    s.tick(600);
+    s.tick(600);
+    assert_eq!(s.m.windows[&WindowId(3)].min_size, None);
+    assert_eq!(s.m.windows[&WindowId(3)].mode, WindowMode::Tiled);
+    assert!(!s.notices.iter().any(|n| n.contains("Not enough room")));
+}
+
+#[test]
 fn retiling_by_hand_forgets_the_learned_min_size() {
     let mut s = Sim::new();
     s.launch(100, "a");
@@ -2788,6 +2809,63 @@ fn undo_reverts_moves_resizes_and_toggles_one_at_a_time() {
     assert_eq!(frames(&s, &[1, 2, 3]), start);
     assert_eq!(s.m.focused_window(), Some(WindowId(3)));
     assert!(matches!(undo(&mut s), Reply::Error { .. }));
+}
+
+#[test]
+fn non_finite_resize_is_refused() {
+    assert!(Command::parse("resize width nan").is_err());
+    assert!(Command::parse("resize height inf").is_err());
+    let mut s = three_tiles();
+    let start = frames(&s, &[1, 2, 3]);
+    let r = s.cmd(Command::Resize {
+        axis: pane_core::Orientation::Horizontal,
+        delta: f64::NAN,
+    });
+    assert!(matches!(r, Reply::Error { .. }));
+    assert_eq!(frames(&s, &[1, 2, 3]), start);
+}
+
+#[test]
+fn undo_keeps_the_zoom_of_workspaces_it_does_not_change() {
+    let mut s = three_tiles();
+    s.cmd(Command::ToggleFullscreen);
+    assert_eq!(s.m.ws("C/1").unwrap().fullscreen, Some(WindowId(3)));
+    s.cmd(Command::Workspace { name: "2".into() });
+    s.window(100, 4, "w", CENTER);
+    s.window(100, 5, "w", CENTER);
+    s.focus(100, 5);
+    s.cmd(Command::Move {
+        dir: Direction::Left,
+    });
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(s.m.ws("C/1").unwrap().fullscreen, Some(WindowId(3)));
+}
+
+#[test]
+fn undo_of_a_profile_apply_brings_back_the_layout_preset() {
+    let mut s = three_tiles();
+    layout(&mut s, "layout columns 3");
+    let p = pane_core::profile::Profile {
+        name: "work".into(),
+        version: 1,
+        when: None,
+        displays: vec![pane_core::profile::ProfileDisplay {
+            display: "center".into(),
+            workspace: "1".into(),
+            tree: two_up("com.apple.mail", "a"),
+            visible: true,
+        }],
+    };
+    s.cmd(Command::ProfileApply {
+        name: None,
+        profile: Some(p),
+    });
+    assert_eq!(s.m.ws("C/1").unwrap().layout, None);
+    assert_eq!(undo(&mut s), Reply::ok());
+    assert_eq!(
+        s.m.ws("C/1").unwrap().layout,
+        Some(pane_core::workspace::LayoutMode::Columns { n: 3 })
+    );
 }
 
 #[test]
