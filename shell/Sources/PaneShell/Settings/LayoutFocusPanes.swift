@@ -4,7 +4,6 @@ import SwiftUI
 @MainActor
 struct LayoutPane: View {
     let model: SettingsModel
-    @State private var electron = ""
 
     var body: some View {
         Form {
@@ -31,25 +30,16 @@ struct LayoutPane: View {
                               value: model.number("auto_float_below") { $0.auto_float_below },
                               range: 0...2000, step: 10)
                 }
-                Section {
-                    TextField("Electron bundle IDs", text: $electron, prompt: Text("com.example.app, …"))
-                        .onSubmit {
-                            let ids = electron.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                            model.set("electron_bundle_ids", ids)
-                        }
-                } header: {
-                    Text("Advanced")
-                } footer: {
-                    Text("Comma separated. These apps get an extra resize pass so they land exactly. Press Return to save.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+                AppRuleSection(
+                    title: "Electron Apps",
+                    footer: "These apps get an extra resize pass so they land exactly where Pane puts them.",
+                    apps: s.electron_bundle_ids,
+                    onChange: { model.set("electron_bundle_ids", $0) },
+                    allowsPatterns: false
+                )
             }
         }
-        .settingsPane(model, height: 470)
-        .onAppear { electron = model.settings?.electron_bundle_ids.joined(separator: ", ") ?? "" }
-        .onChange(of: model.settings?.electron_bundle_ids) { _, ids in
-            electron = ids?.joined(separator: ", ") ?? ""
-        }
+        .settingsPane(model, height: 640)
     }
 }
 
@@ -100,7 +90,7 @@ struct FocusPane: View {
                 }
             }
         }
-        .settingsPane(model, height: 430)
+        .settingsPane(model, height: 470)
         .onAppear { dim = model.settings?.dim_unfocused ?? 0 }
         .onChange(of: model.settings?.dim_unfocused) { _, v in dim = v ?? 0 }
     }

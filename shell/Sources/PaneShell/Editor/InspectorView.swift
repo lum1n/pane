@@ -37,15 +37,7 @@ struct InspectorView: View {
             Section {
                 HStack(spacing: 12) {
                     AppIconView(bundleId: s.bundle_id, size: 48)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(AppIcons.name(for: s.bundle_id)).font(.headline).lineLimit(2)
-                        Text(s.bundle_id)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
+                    Text(AppIcons.name(for: s.bundle_id)).font(.headline).lineLimit(2)
                 }
                 .padding(.vertical, 4)
             }

@@ -59,9 +59,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let pads = item("Scratchpads", nil, symbol: "rectangle.on.rectangle")
             let padMenu = NSMenu()
             for sp in s.scratchpads ?? [] {
-                let i = item(sp.name, #selector(toggleScratchpad(_:)), obj: sp.name)
+                let i = item(sp.displayName, #selector(toggleScratchpad(_:)), obj: sp.name)
+                i.image = AppIcons.small(for: sp.app)
                 i.state = sp.shown ? .on : .off
-                if let k = sp.key { i.toolTip = "Key: \(k)" }
+                if let k = sp.key { i.toolTip = "Key: \(Shortcut.pretty(k))" }
                 padMenu.addItem(i)
             }
             if padMenu.items.isEmpty {

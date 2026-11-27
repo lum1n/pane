@@ -77,6 +77,9 @@ private struct SettingsPaneModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // System Settings look: inset rounded groups, labels left and
+            // controls right. Without this, macOS falls back to `.columns`.
+            .formStyle(.grouped)
             .statusCapsule($model.message, autoDismiss: model.recording == nil)
             .frame(width: UIConstants.settingsWidth, height: height)
             .onAppear { model.load() }
