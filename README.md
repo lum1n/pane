@@ -61,6 +61,8 @@ Floating windows you drop become tiles. Typing, clicking or a hotkey while you h
 
 Dragging a tiled window by its title bar works the same way, with no modifier: the outline shows where it will land, and letting go drops it there (the same targets as above). Let go over its own tile and it goes back. Pausing mid-drag is fine; the window stays where you hold it. This needs the pointer event tap (Input Monitoring); without it, or with `title_drag = false` (Settings > Shortcuts), a dragged tile snaps back.
 
+Trackpad swipes are off by default. Turn them on with **Switch workspaces with three-finger swipes** in Settings > Shortcuts (or `trackpad_swipes = true`). Then a three-finger swipe left shows the next workspace of the display under the pointer, a swipe right the previous one, and a four-finger swipe up opens the palette. One swipe moves one workspace. Pane only listens, so macOS still gets the gesture: first set System Settings > Trackpad > More Gestures > "Swipe between full-screen apps" to four fingers or off. Like title-bar drags, this needs the pointer event tap (Input Monitoring).
+
 `mod-z` undoes the last layout change: a move, resize, swap, title-bar or edge drag, move to another workspace, split direction, tiles/accordion, float/tile, or an applied profile. Press it again to go further back, up to 20 changes. Windows opened since stay where they are, and windows closed since are left out.
 
 `mod-/` (or **Go to Window…** in the menu) opens the palette. Type part of an app name or window title to find a window on any display or workspace, including hidden and minimized ones; Enter shows its workspace and focuses it. With nothing typed, the window you were in before comes first, so `mod-/` then Enter goes back. Workspaces and profiles are listed too; start with `>` to search only commands (each with its shortcut). `pane search TEXT` returns the same list as JSON.
@@ -99,9 +101,9 @@ Two pointer options, both off by default (Settings > Focus). `mouse_follows_focu
 The `pane` CLI talks to the running app over a Unix socket:
 
 ```sh
-pane ws 3                 pane query windows|displays|workspaces|tree|snapshot
-pane do "focus left"      pane profile list|apply|capture|delete|auto|manual NAME
-                          pane profile diff|update [NAME]
+pane ws 3                 pane query windows|apps|displays|workspaces|tree|snapshot|config
+pane move-to 3            pane profile list|apply|capture|show|delete|auto|manual NAME
+pane do "focus left"      pane profile diff|update [NAME]
 pane reload               pane recover [--all-apps]
 pane search saf           pane do "focus-window 1234"
 pane do "scratchpad com.googlecode.iterm2"    pane do "summon Safari"
