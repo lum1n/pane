@@ -23,6 +23,7 @@ use crate::proto::{Command, LayoutPreset, QueryKind, Reply, UiRequest};
 use crate::reconcile;
 use crate::rules::{decide, Decision, RuleAction, TilePlacement, WindowTraits};
 use crate::tree::{InsertAt, Leaf, MoveResult, NodeId, SerNode, Tree};
+use crate::undo;
 use crate::workspace::{split_id, valid_name, ws_id, Cycle, LayoutMode, MASTER_RATIO_RANGE};
 use crate::{Pid, WindowId, WorkspaceId};
 
@@ -1486,7 +1487,9 @@ fn tick(m: &mut Model, fx: &mut Vec<Effect>) {
         .collect();
     for (wid, frame) in due {
         m.drags.remove(&wid);
+        let before = undo::capture(m);
         commit_drag(m, wid, frame);
+        undo::record(m, before);
         // Whether or not the layout changed, the window goes to its tile.
         if let Some(s) = m.last_sent.get_mut(&wid) {
             s.settled = false;
@@ -1598,6 +1601,24 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
     if m.layout_dirty {
         fx.extend(reconcile::refresh_desired(m));
     }
+    // Tree-changing commands can be undone: keep the layout from before.
+    let undoable = matches!(
+        cmd,
+        Command::Move { .. }
+            | Command::Resize { .. }
+            | Command::MoveToWorkspace { .. }
+            | Command::ToggleOrientation
+            | Command::ToggleLayout
+            | Command::ToggleFloat
+            | Command::ProfileApply {
+                profile: Some(_),
+                ..
+            }
+            | Command::Gesture {
+                phase: GesturePhase::Drop { .. }
+            }
+    );
+    let before = undoable.then(|| undo::capture(m));
     let r = match cmd {
         Command::Focus { dir } => cmd_focus(m, dir, fx),
         Command::Move { dir } => cmd_move(m, dir, fx),
@@ -1659,6 +1680,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         Command::ToggleFloat => cmd_toggle_float(m, fx),
         Command::ToggleFullscreen => cmd_toggle_fullscreen(m, fx),
         Command::SwapWorkspaces => cmd_swap_workspaces(m, fx),
+        Command::Undo => cmd_undo(m, fx),
         Command::Reload => Reply::err("reload is handled by the runtime"),
         Command::ProfilePicker => {
             fx.push(Effect::UiRequest(UiRequest::ProfilePicker));
@@ -1706,8 +1728,35 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             Reply::data(&crate::palette::search(m, &query, &profiles))
         }
     };
+    if let Some(before) = before {
+        undo::record(m, before);
+    }
     gc_workspaces(m);
     r
+}
+
+/// Put back the newest layout in the undo ring. One that changes nothing
+/// now (its windows all closed) is skipped.
+fn cmd_undo(m: &mut Model, fx: &mut Vec<Effect>) -> Reply {
+    while let Some(prev) = m.undo.pop_back() {
+        let now = undo::capture(m);
+        let focus = undo::restore(m, &prev);
+        if undo::capture(m) == now {
+            continue;
+        }
+        if let Some(w) = focus {
+            focus_fx(m, w, fx);
+        } else if m.focused_window().is_none() {
+            if let Some(w) = m.focused_ws_id().and_then(|ws| first_window(m, &ws)) {
+                focus_fx(m, w, fx);
+            }
+        }
+        m.suppress_follow_until = m.now_ms + FOLLOW_SUPPRESS_MS;
+        fx.push(Effect::PersistState);
+        fx.push(Effect::Snapshot);
+        return Reply::ok();
+    }
+    Reply::err("nothing to undo")
 }
 
 /// Equal sizes for the tiles of the focused window's container (the

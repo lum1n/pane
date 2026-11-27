@@ -40,6 +40,7 @@ All shortcuts are built on one **modifier** (`mod`, Option by default). Change i
 | `mod-shift-r` | reload config |
 | `mod-shift-p` | profile picker |
 | `mod-/` | palette: go to any window, workspace, profile or command |
+| `mod-z` | undo the last layout change |
 
 You can also resize with the mouse: drag the edge a tiled window shares with a neighbour. When you let go, the tile keeps its new size and only that neighbour gives or takes space. Dragging an outer screen edge snaps the window back.
 
@@ -53,6 +54,8 @@ To move a window with the mouse, hold the modifier (Option by default) over it a
 | a screen with no tiles | fills that screen |
 
 Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Hotkeys or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
+
+`mod-z` undoes the last layout change: a move, resize, swap, edge drag, move to another workspace, split direction, tiles/accordion, float/tile, or an applied profile. Press it again to go further back, up to 20 changes. Windows opened since stay where they are, and windows closed since are left out.
 
 `mod-/` (or **Go to Window…** in the menu) opens the palette. Type part of an app name or window title to find a window on any display or workspace, including hidden and minimized ones; Enter shows its workspace and focuses it. With nothing typed, the window you were in before comes first, so `mod-/` then Enter goes back. Workspaces and profiles are listed too; start with `>` to search only commands (each with its shortcut). `pane search TEXT` returns the same list as JSON.
 

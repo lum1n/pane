@@ -59,6 +59,8 @@ pub enum Command {
     ToggleFullscreen,
     /// Swap the visible workspaces of the focused and the next display.
     SwapWorkspaces,
+    /// Put back the layout from before the last tree-changing command.
+    Undo,
     Reload,
     ProfilePicker,
     OpenEditor,
@@ -298,6 +300,7 @@ impl Command {
             "toggle-float" => Command::ToggleFloat,
             "toggle-fullscreen" => Command::ToggleFullscreen,
             "swap-workspaces" => Command::SwapWorkspaces,
+            "undo" => Command::Undo,
             "reload" => Command::Reload,
             "profile-picker" => Command::ProfilePicker,
             "open-editor" => Command::OpenEditor,
