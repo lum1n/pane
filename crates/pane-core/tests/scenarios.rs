@@ -3072,3 +3072,95 @@ fn trackpad_swipes_cycle_the_display_under_the_pointer() {
         .any(|f| matches!(f, Effect::UiRequest(UiRequest::Palette))));
     assert_eq!(s.m.visible["C"], "C/2");
 }
+
+/// Seen on macOS at startup: a window was sent two frames 17 ms apart, and
+/// the read-back of the second showed the size the app passed through on
+/// its way from the first. Returns that in-between frame and the second.
+fn burst_with_stale_readback(s: &mut Sim) -> (Rect, Rect) {
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "w1", CENTER);
+    let mut sent = Vec::new();
+    for wid in [2, 3] {
+        s.now += 10;
+        let at = CENTER;
+        s.frames.insert(WindowId(wid), at);
+        let e = Event::WindowsDiscovered {
+            pid: 100,
+            windows: vec![probe(100, wid, &format!("w{wid}"), at)],
+            initial: false,
+        };
+        let mut fx = reduce(&mut s.m, e, s.now);
+        fx.extend(reconcile(&mut s.m));
+        sent.extend(fx);
+    }
+    let mut ours = Vec::new();
+    let mut others = Vec::new();
+    for f in sent {
+        if let Effect::SetFrame { wid, rect, gen, .. } = f {
+            if wid == WindowId(1) {
+                ours.push((rect, gen));
+            } else {
+                others.push((wid, rect, gen));
+            }
+        }
+    }
+    assert_eq!(ours.len(), 2, "two frames for window 1: {ours:?}");
+    let (between, first_gen) = ours[0];
+    let (target, gen) = ours[1];
+    assert!(between.w > target.w + 2.0);
+    for (wid, rect, gen) in others {
+        s.frames.insert(wid, rect);
+        s.ev(Event::FrameApplied {
+            pid: 100,
+            wid,
+            gen,
+            ok: true,
+            actual: Some(rect),
+        });
+    }
+    // The app is still on its way: it sits at the first frame's size.
+    s.frames.insert(WindowId(1), between);
+    s.stuck.push(WindowId(1));
+    for g in [first_gen, gen] {
+        s.ev(Event::FrameApplied {
+            pid: 100,
+            wid: WindowId(1),
+            gen: g,
+            ok: true,
+            actual: Some(between),
+        });
+    }
+    (between, target)
+}
+
+#[test]
+fn stale_size_after_a_burst_of_frames_is_not_a_min_size() {
+    let mut s = Sim::new();
+    let (_, target) = burst_with_stale_readback(&mut s);
+    // The retry reads the same stale size: not yet a minimum.
+    s.tick(600);
+    assert_eq!(s.m.windows[&WindowId(1)].min_size, None);
+    // Then the app catches up.
+    s.stuck.clear();
+    s.tick(1000);
+    assert_eq!(s.m.windows[&WindowId(1)].min_size, None);
+    assert!(
+        (s.frame(1).w - target.w).abs() <= 2.0,
+        "in its tile: {:?}",
+        s.frame(1)
+    );
+    assert!(!s.m.windows[&WindowId(1)].stubborn);
+}
+
+#[test]
+fn min_size_is_still_learned_after_a_burst_of_frames() {
+    let mut s = Sim::new();
+    let (between, _) = burst_with_stale_readback(&mut s);
+    // The size never changes: it is the app's minimum after all.
+    s.tick(600);
+    s.tick(600);
+    let min = s.m.windows[&WindowId(1)].min_size.expect("learned");
+    assert!((min.w - between.w).abs() <= 2.0, "{min:?}");
+    assert_eq!(s.m.windows[&WindowId(1)].mode, WindowMode::Tiled);
+}
