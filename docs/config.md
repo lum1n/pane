@@ -51,6 +51,14 @@ action = "float"                 # float | tile | ignore
 workspace = "3"                  # optional: where new windows go
 display = "right"                # optional: visible workspace of that display
 
+# Layout rules: where a matching window's tile goes when it is first tiled.
+[[rule]]
+app = "com.mitchellh.ghostty"
+position = "right"               # next (default) | left | right | top | bottom
+weight = 0.3                     # optional: share of the split, between 0 and 1
+# orientation = "vertical"       # with position = "next": horizontal (beside) | vertical (below)
+# layout = "accordion"           # tiles | accordion: layout of the split the tile lands in
+
 # A scratchpad: one window of `app`, toggled as a centered float on the
 # focused display. Opens the app if it is not running.
 [[scratchpad]]
@@ -110,6 +118,17 @@ Pane tiles standard, resizable windows of regular (Dock) apps. It floats:
 - windows smaller than `auto_float_below`.
 
 `float_apps`, `tile_apps` and `[[rule]]`s override this (rules first). Apps started from a terminal, such as `cargo run`, have no bundle id; Pane names them by their executable, e.g. `my-app`.
+
+### Layout rules
+
+`position`, `orientation`, `layout` and `weight` in a `[[rule]]` decide where a matching window's tile goes the first time it is tiled:
+
+- `position = "left"`, `"right"`, `"top"` or `"bottom"` puts it at that edge of the workspace, as a full-height column or full-width row next to everything else, like dragging a window to a display edge.
+- `position = "next"` (the default) puts it next to the focused tile. `orientation = "horizontal"` places it beside that tile and `"vertical"` below it, splitting the tile if needed. An edge position sets the orientation itself, so the two can't be combined.
+- `weight` is the tile's share of the split it lands in: `0.3` makes a terminal column take 30% of the width.
+- `layout` sets the layout of that split, `tiles` or `accordion`. With an edge position the split is the whole workspace.
+
+Each of these comes from the first matching rule that sets it, so a rule for one title can override a rule for the whole app. They apply only when Pane makes a new tile: a window going back to a remembered tile, a profile slot, or the layout saved across a restart keeps that place. Floating windows ignore them.
 
 `pane query windows` shows a `reason` for every window, for example `auto-float: not resizable`. `pane query apps` lists the apps Pane observes. If an app is missing from `pane query apps`, Pane has not seen a window from it.
 
