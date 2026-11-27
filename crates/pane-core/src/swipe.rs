@@ -27,16 +27,33 @@ pub enum Swipe {
 /// One finger on the trackpad.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Touch {
-    /// Stable for as long as the finger stays down.
-    pub id: u64,
     pub x: f64,
     pub y: f64,
 }
 
+/// Where a set of fingers is: their centre, and how far apart they are
+/// (mean distance from the centre).
+fn centre_and_spread(touches: &[Touch]) -> (f64, f64, f64) {
+    let n = touches.len().max(1) as f64;
+    let cx = touches.iter().map(|t| t.x).sum::<f64>() / n;
+    let cy = touches.iter().map(|t| t.y).sum::<f64>() / n;
+    let spread = touches
+        .iter()
+        .map(|t| (t.x - cx).hypot(t.y - cy))
+        .sum::<f64>()
+        / n;
+    (cx, cy, spread)
+}
+
+/// Fingers are told apart only by how many there are, not by
+/// `NSTouch.identity` (whose hash is not promised to stay the same from one
+/// event to the next).
 #[derive(Debug, Default)]
 pub struct SwipeTracker {
-    /// Fingers at the start of the stroke, sorted by id.
-    start: Vec<Touch>,
+    /// Fingers in the stroke.
+    count: usize,
+    /// Centre and spread at the start of the stroke.
+    start: (f64, f64, f64),
     /// A swipe fired in this stroke.
     fired: bool,
 }
@@ -48,55 +65,34 @@ impl SwipeTracker {
 
     /// Forget the stroke (the tap was disabled, swipes were turned off).
     pub fn reset(&mut self) {
-        self.start.clear();
-        self.fired = false;
+        *self = Self::default();
     }
 
     /// The fingers touching the trackpad now (lifted ones left out).
     pub fn on_touches(&mut self, touches: &[Touch]) -> Option<Swipe> {
-        let mut now = touches.to_vec();
-        now.sort_by_key(|t| t.id);
-        now.dedup_by_key(|t| t.id);
-        let same_fingers =
-            now.len() == self.start.len() && now.iter().zip(&self.start).all(|(a, b)| a.id == b.id);
-        if !same_fingers {
+        let now = centre_and_spread(touches);
+        if touches.len() != self.count {
             // A new stroke whenever a finger lands or lifts.
+            self.count = touches.len();
             self.start = now;
             self.fired = false;
             return None;
         }
-        if self.fired || !matches!(now.len(), 3 | 4) {
+        if self.fired || !matches!(self.count, 3 | 4) {
             return None;
         }
-        let n = now.len() as f64;
-        let dx = now
-            .iter()
-            .zip(&self.start)
-            .map(|(a, b)| a.x - b.x)
-            .sum::<f64>()
-            / n;
-        let dy = now
-            .iter()
-            .zip(&self.start)
-            .map(|(a, b)| a.y - b.y)
-            .sum::<f64>()
-            / n;
-        let swipe = match now.len() {
+        let dx = now.0 - self.start.0;
+        let dy = now.1 - self.start.1;
+        // Fingers spreading or closing (a pinch) while the centre drifts.
+        let pinch = (now.2 - self.start.2).abs();
+        let swipe = match self.count {
             3 if dx.abs() >= SWIPE_DISTANCE && dx.abs() >= SWIPE_STRAIGHTNESS * dy.abs() => {
                 Some(if dx < 0.0 { Swipe::Left } else { Swipe::Right })
             }
             4 if dy >= SWIPE_DISTANCE && dy >= SWIPE_STRAIGHTNESS * dx.abs() => Some(Swipe::Up),
             _ => None,
         };
-        // Fingers that all move the same way: every finger must have gone
-        // the swipe's way, which rules out pinches and rotations.
-        let swipe = swipe.filter(|s| {
-            now.iter().zip(&self.start).all(|(a, b)| match s {
-                Swipe::Left => a.x < b.x,
-                Swipe::Right => a.x > b.x,
-                Swipe::Up => a.y > b.y,
-            })
-        });
+        let swipe = swipe.filter(|_| pinch < 0.5 * dx.hypot(dy));
         self.fired = swipe.is_some();
         swipe
     }
@@ -109,7 +105,6 @@ mod tests {
     fn fingers(n: usize, dx: f64, dy: f64) -> Vec<Touch> {
         (0..n)
             .map(|i| Touch {
-                id: i as u64 + 1,
                 x: 0.3 + 0.1 * i as f64 + dx,
                 y: 0.5 + dy,
             })

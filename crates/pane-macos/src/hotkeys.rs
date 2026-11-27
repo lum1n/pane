@@ -45,6 +45,8 @@ struct TapState {
     swipes: Arc<AtomicBool>,
     /// Tap thread only.
     swipe: RefCell<SwipeTracker>,
+    /// A gesture event has been logged since swipes were turned on.
+    seen_gesture: Cell<bool>,
     tx: Sender<Command>,
 }
 
@@ -91,12 +93,20 @@ impl TapState {
     /// A trackpad gesture event: feed its touches to the swipe tracker.
     unsafe fn touches(&self, event: CGEventRef) {
         if !self.swipes.load(Ordering::Relaxed) {
+            self.seen_gesture.set(false);
             return;
         }
         let touches = crate::touches::touching(event);
+        if !self.seen_gesture.replace(true) {
+            tracing::info!(
+                "trackpad gesture events arrive ({} fingers in the first)",
+                touches.len()
+            );
+        }
         let swipe = self.swipe.borrow_mut().on_touches(&touches);
         if let Some(swipe) = swipe {
             let at = event_point(event);
+            tracing::info!("trackpad swipe {swipe:?} at {:.0},{:.0}", at.x, at.y);
             let _ = self.tx.send(Command::Swipe { swipe, at });
         }
     }
@@ -114,6 +124,7 @@ impl TapState {
 
 static KEY_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static MOUSE_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static GESTURE_PORT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 fn mods_of(c: &Chord) -> u8 {
     (c.shift as u8 * SHIFT) | (c.ctrl as u8 * CTRL) | (c.alt as u8 * ALT) | (c.cmd as u8 * CMD)
@@ -142,7 +153,7 @@ unsafe fn event_point(event: CGEventRef) -> Point {
 /// macOS turned a tap off (it was too slow, or user input): turn both back
 /// on and forget any half-seen gesture.
 unsafe fn reenable(st: &TapState) {
-    for port in [&KEY_PORT, &MOUSE_PORT] {
+    for port in [&KEY_PORT, &MOUSE_PORT, &GESTURE_PORT] {
         let p = port.load(Ordering::Acquire);
         if !p.is_null() {
             CGEventTapEnable(p, true);
@@ -276,6 +287,7 @@ impl Hotkeys {
             last_drag: Cell::new(None),
             swipes: swipes.clone(),
             swipe: RefCell::new(SwipeTracker::new()),
+            seen_gesture: Cell::new(false),
             tx: tx.clone(),
         });
         std::thread::Builder::new()
@@ -307,8 +319,7 @@ impl Hotkeys {
                     | (1u64 << kCGEventLeftMouseDragged)
                     | (1u64 << kCGEventLeftMouseUp)
                     | (1u64 << kCGEventRightMouseDown)
-                    | (1u64 << kCGEventOtherMouseDown)
-                    | (1u64 << kCGEventGesture);
+                    | (1u64 << kCGEventOtherMouseDown);
                 let mport = CGEventTapCreate(
                     kCGSessionEventTap,
                     kCGTailAppendEventTap,
@@ -324,6 +335,25 @@ impl Hotkeys {
                     let msrc = CFMachPortCreateRunLoopSource(std::ptr::null(), mport, 0);
                     CFRunLoopAddSource(rl, msrc, kCFRunLoopCommonModes);
                     CGEventTapEnable(mport, true);
+                }
+                // Trackpad touches get their own tap at the head of the
+                // session chain, ahead of the Dock's gesture handling.
+                // Listen-only, so system gestures still work.
+                let gport = CGEventTapCreate(
+                    kCGSessionEventTap,
+                    kCGHeadInsertEventTap,
+                    kCGEventTapOptionListenOnly,
+                    1u64 << kCGEventGesture,
+                    mouse_cb,
+                    user,
+                );
+                if gport.is_null() {
+                    tracing::warn!("could not create the trackpad event tap; swipes are off");
+                } else {
+                    GESTURE_PORT.store(gport, Ordering::Release);
+                    let gsrc = CFMachPortCreateRunLoopSource(std::ptr::null(), gport, 0);
+                    CFRunLoopAddSource(rl, gsrc, kCFRunLoopCommonModes);
+                    CGEventTapEnable(gport, true);
                 }
                 let _ = ok_tx.send(true);
                 CFRunLoopRun();
@@ -360,7 +390,9 @@ impl Hotkeys {
     /// Trackpad swipes: send `Command::Swipe` for three-finger left/right
     /// and four-finger up.
     pub fn set_swipes(&self, on: bool) {
-        self.swipes.store(on, Ordering::Relaxed);
+        if self.swipes.swap(on, Ordering::Relaxed) != on {
+            tracing::info!("trackpad swipes {}", if on { "on" } else { "off" });
+        }
     }
 
     pub fn update(&self, bindings: &[(Chord, Command)], gesture: Option<Mods>) {

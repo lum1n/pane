@@ -49,13 +49,7 @@ pub unsafe fn touching(event: CGEventRef) -> Vec<Touch> {
                 continue;
             }
             let p: NSPoint = msg_send![t, normalizedPosition];
-            let identity: *mut AnyObject = msg_send![t, identity];
-            let id: usize = msg_send![identity, hash];
-            out.push(Touch {
-                id: id as u64,
-                x: p.x,
-                y: p.y,
-            });
+            out.push(Touch { x: p.x, y: p.y });
         }
         out
     })
