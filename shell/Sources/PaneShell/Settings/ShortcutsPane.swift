@@ -58,8 +58,12 @@ struct ShortcutsPane: View {
                         get: { model.settings?.title_drag ?? true },
                         set: { model.set("title_drag", $0) }
                     ))
+                    Toggle("Switch workspaces with three-finger swipes", isOn: Binding(
+                        get: { model.settings?.trackpad_swipes ?? false },
+                        set: { model.set("trackpad_swipes", $0) }
+                    ))
                 } footer: {
-                    Text("Every default shortcut uses the modifier. Moving adds ⇧ and resizing adds ⌃ (or the next key not already in the modifier). To move by pointing, hold the modifier over a window and point at another tile, its edge, a screen edge or another display, then release. Esc cancels. Dragging a tiled window's title bar shows the same outline; let go over its own tile and it goes back.")
+                    Text("Every default shortcut uses the modifier. Moving adds ⇧ and resizing adds ⌃ (or the next key not already in the modifier). To move by pointing, hold the modifier over a window and point at another tile, its edge, a screen edge or another display, then release. Esc cancels. Dragging a tiled window's title bar shows the same outline; let go over its own tile and it goes back. Three fingers left or right show the next or previous workspace of the display under the pointer and four fingers up open the palette; set macOS's own three-finger swipes to four fingers first.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -67,7 +71,7 @@ struct ShortcutsPane: View {
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
-            .frame(height: 230)
+            .frame(height: 270)
 
             HStack {
                 SearchField(text: $query, prompt: "Search shortcuts")

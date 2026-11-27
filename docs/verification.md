@@ -141,6 +141,13 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Switching workspace under a still pointer does not change focus. Holding Option and pointing (gesture) does not focus anything.
 - [ ] Both toggles in Settings > Focus take effect without restarting.
 
+## Trackpad swipes
+- [ ] First set System Settings > Trackpad > More Gestures > "Swipe between full-screen apps" to four fingers or off, and check Mission Control / App Exposé are not on four fingers up.
+- [ ] Tick **Switch workspaces with three-finger swipes** in Settings > Shortcuts (or `trackpad_swipes = true`): with the pointer over the centre display, a three-finger swipe left shows its next workspace and right the previous one, even while another display has focus. One swipe moves one workspace, however far the fingers travel.
+- [ ] A four-finger swipe up opens the palette.
+- [ ] Two-finger scrolling, pinch to zoom, rotating, and resting three fingers do nothing. Three-finger drag (Accessibility) still drags windows; if it also switches workspaces, note it here.
+- [ ] Untick the toggle: swipes do nothing, without restarting.
+
 ## Doctor
 - [ ] With Pane running and permissions granted, `pane doctor` shows Accessibility and Input Monitoring for Pane (no "this terminal"), `Hotkeys: running`, the displays as in `pane query displays`, `run.lock: held by pid` Pane's pid, and exits 0.
 - [ ] Turn Pane off in Privacy & Security > Accessibility: `pane doctor` says NOT granted and exits 1.

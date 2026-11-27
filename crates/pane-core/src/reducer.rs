@@ -22,10 +22,11 @@ use crate::profile::{title_matches, Profile, ProfileDisplay};
 use crate::proto::{Command, LayoutPreset, QueryKind, Reply, UiRequest};
 use crate::reconcile;
 use crate::rules::{decide, Decision, RuleAction, TilePlacement, WindowTraits};
+use crate::swipe::Swipe;
 use crate::tree::{InsertAt, Leaf, MoveResult, NodeId, SerNode, Tree};
 use crate::undo;
 use crate::workspace::{split_id, valid_name, ws_id, Cycle, LayoutMode, MASTER_RATIO_RANGE};
-use crate::{Pid, WindowId, WorkspaceId};
+use crate::{DisplayId, Pid, WindowId, WorkspaceId};
 
 /// Quiet time after a user move before a tiled window snaps back.
 pub const SNAP_BACK_MS: u64 = 300;
@@ -49,7 +50,7 @@ pub fn reduce(m: &mut Model, ev: Event, now_ms: u64) -> Vec<Effect> {
     // Focus moved by the user through Pane (hotkeys, palette, CLI), not by
     // the pointer or the OS.
     let keyboard = matches!(&ev, Event::Command { cmd, .. }
-        if !cmd.is_query() && !matches!(cmd, Command::Gesture { .. } | Command::Hover { .. } | Command::Drag { .. }));
+        if !cmd.is_query() && !matches!(cmd, Command::Gesture { .. } | Command::Hover { .. } | Command::Drag { .. } | Command::Swipe { .. }));
     if keyboard {
         // A pending hover must not undo what the user just chose.
         m.hover = None;
@@ -1726,7 +1727,10 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
             }
             Err(e) => Reply::err(e),
         },
-        Command::CycleWorkspace { which } => cmd_cycle_workspace(m, which, fx),
+        Command::CycleWorkspace { which } => match m.focused_display() {
+            Some(d) => cmd_cycle_workspace(m, &d, which, fx),
+            None => Reply::err("no display"),
+        },
         Command::MoveToWorkspace { name } => cmd_move_to_workspace(m, &name, fx),
         Command::FocusDisplay { which } => {
             let Some(d) = cycle_display(m, which) else {
@@ -1817,6 +1821,7 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),
         Command::Hover { at } => cmd_hover(m, at),
         Command::Drag { phase } => cmd_drag(m, phase, fx),
+        Command::Swipe { swipe, at } => cmd_swipe(m, swipe, at, fx),
         Command::FocusWindow { wid } => cmd_focus_window(m, WindowId(wid), fx),
         Command::Scratchpad { name } => cmd_scratchpad(m, &name, fx),
         Command::Summon { app } => cmd_summon(m, &app, fx),
@@ -2166,13 +2171,10 @@ fn target_ws(m: &mut Model, target: &str) -> Result<WorkspaceId, String> {
     Ok(m.ensure_workspace(&home, &name))
 }
 
-fn cmd_cycle_workspace(m: &mut Model, which: Cycle, fx: &mut Vec<Effect>) -> Reply {
-    let Some(d) = m.focused_display() else {
-        return Reply::err("no display");
-    };
-    let current = m.visible.get(&d).cloned();
+fn cmd_cycle_workspace(m: &mut Model, d: &DisplayId, which: Cycle, fx: &mut Vec<Effect>) -> Reply {
+    let current = m.visible.get(d).cloned();
     let list: Vec<WorkspaceId> = m
-        .workspaces_on(&d)
+        .workspaces_on(d)
         .into_iter()
         .filter(|w| {
             Some(&w.id) == current.as_ref()
@@ -3019,6 +3021,32 @@ fn window_at(m: &Model, at: Point) -> Option<WindowId> {
 
 /// The pointer moved: focus the window under it once it rests there for
 /// `HOVER_FOCUS_MS` (each move starts the wait again).
+/// Three fingers left/right: the next/previous workspace of the display
+/// under the pointer (like swiping between Spaces). Four fingers up: the
+/// palette.
+fn cmd_swipe(m: &mut Model, swipe: Swipe, at: Point, fx: &mut Vec<Effect>) -> Reply {
+    if !m.config.settings.trackpad_swipes {
+        return Reply::ok();
+    }
+    let which = match swipe {
+        Swipe::Left => Cycle::Next,
+        Swipe::Right => Cycle::Prev,
+        Swipe::Up => {
+            fx.push(Effect::UiRequest(UiRequest::Palette));
+            return Reply::ok();
+        }
+    };
+    let under = m
+        .displays
+        .iter()
+        .find(|d| d.frame.contains(at))
+        .map(|d| d.id.clone());
+    match under.or_else(|| m.focused_display()) {
+        Some(d) => cmd_cycle_workspace(m, &d, which, fx),
+        None => Reply::err("no display"),
+    }
+}
+
 fn cmd_hover(m: &mut Model, at: Point) -> Reply {
     m.hover = None;
     if m.config.settings.focus_follows_mouse && m.gesture.is_none() {

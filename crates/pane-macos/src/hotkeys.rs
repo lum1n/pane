@@ -1,9 +1,9 @@
 //! Global hotkeys and the hold-the-modifier-and-point gesture, through two
 //! CGEventTaps on one thread: an active keyboard tap (it swallows hotkeys)
-//! and a listen-only tap for the pointer and modifier keys (it can never
-//! delay the cursor).
+//! and a listen-only tap for the pointer, modifier keys and trackpad
+//! touches (it can never delay the cursor or take a system gesture away).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -16,6 +16,7 @@ use pane_core::gesture::{
     mod_bits, DragPhase, GesturePhase, GestureTracker, KeyVerdict, ALT, CMD, CTRL, SHIFT,
 };
 use pane_core::proto::Command;
+use pane_core::swipe::SwipeTracker;
 
 use crate::ffi::*;
 
@@ -40,6 +41,10 @@ struct TapState {
     drag: Arc<AtomicBool>,
     /// Where the last `DragPhase::Move` was sent (tap thread only).
     last_drag: Cell<Option<Point>>,
+    /// Trackpad swipes are on: watch gesture events' touches.
+    swipes: Arc<AtomicBool>,
+    /// Tap thread only.
+    swipe: RefCell<SwipeTracker>,
     tx: Sender<Command>,
 }
 
@@ -81,6 +86,19 @@ impl TapState {
             DragPhase::Move { at }
         };
         let _ = self.tx.send(Command::Drag { phase });
+    }
+
+    /// A trackpad gesture event: feed its touches to the swipe tracker.
+    unsafe fn touches(&self, event: CGEventRef) {
+        if !self.swipes.load(Ordering::Relaxed) {
+            return;
+        }
+        let touches = crate::touches::touching(event);
+        let swipe = self.swipe.borrow_mut().on_touches(&touches);
+        if let Some(swipe) = swipe {
+            let at = event_point(event);
+            let _ = self.tx.send(Command::Swipe { swipe, at });
+        }
     }
 
     fn send_phase(&self, phase: Option<GesturePhase>) {
@@ -130,6 +148,7 @@ unsafe fn reenable(st: &TapState) {
             CGEventTapEnable(p, true);
         }
     }
+    st.swipe.borrow_mut().reset();
     st.send_phase(st.with_tracker(|t| t.reset()).flatten());
 }
 
@@ -207,6 +226,10 @@ unsafe extern "C" fn mouse_cb(
         kCGEventLeftMouseDown | kCGEventRightMouseDown | kCGEventOtherMouseDown => {
             st.with_tracker(|t| t.on_mouse_down()).flatten()
         }
+        kCGEventGesture => {
+            st.touches(event);
+            None
+        }
         _ => None,
     };
     st.send_phase(phase);
@@ -221,6 +244,7 @@ pub struct Hotkeys {
     gesture: Arc<Mutex<GestureTracker>>,
     hover: Arc<AtomicBool>,
     drag: Arc<AtomicBool>,
+    swipes: Arc<AtomicBool>,
     tx: Sender<Command>,
 }
 
@@ -240,6 +264,7 @@ impl Hotkeys {
         )));
         let hover = Arc::new(AtomicBool::new(false));
         let drag = Arc::new(AtomicBool::new(false));
+        let swipes = Arc::new(AtomicBool::new(false));
         let (ok_tx, ok_rx) = crossbeam_channel::bounded(1);
         let state = Box::new(TapState {
             table: table.clone(),
@@ -249,6 +274,8 @@ impl Hotkeys {
             last_hover: Cell::new(None),
             drag: drag.clone(),
             last_drag: Cell::new(None),
+            swipes: swipes.clone(),
+            swipe: RefCell::new(SwipeTracker::new()),
             tx: tx.clone(),
         });
         std::thread::Builder::new()
@@ -280,7 +307,8 @@ impl Hotkeys {
                     | (1u64 << kCGEventLeftMouseDragged)
                     | (1u64 << kCGEventLeftMouseUp)
                     | (1u64 << kCGEventRightMouseDown)
-                    | (1u64 << kCGEventOtherMouseDown);
+                    | (1u64 << kCGEventOtherMouseDown)
+                    | (1u64 << kCGEventGesture);
                 let mport = CGEventTapCreate(
                     kCGSessionEventTap,
                     kCGTailAppendEventTap,
@@ -308,6 +336,7 @@ impl Hotkeys {
                 gesture: tracker,
                 hover,
                 drag,
+                swipes,
                 tx,
             }),
             _ => Err("could not create the keyboard event tap (grant Accessibility, and Input Monitoring if asked)".into()),
@@ -326,6 +355,12 @@ impl Hotkeys {
     /// Title-bar drags: send `Command::Drag` while the left button is held.
     pub fn set_drag(&self, on: bool) {
         self.drag.store(on, Ordering::Relaxed);
+    }
+
+    /// Trackpad swipes: send `Command::Swipe` for three-finger left/right
+    /// and four-finger up.
+    pub fn set_swipes(&self, on: bool) {
+        self.swipes.store(on, Ordering::Relaxed);
     }
 
     pub fn update(&self, bindings: &[(Chord, Command)], gesture: Option<Mods>) {

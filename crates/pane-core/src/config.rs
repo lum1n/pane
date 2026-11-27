@@ -97,6 +97,9 @@ pub struct Settings {
     /// and drops it there on release (swap, split, other display), like the
     /// modifier gesture. Off: it snaps back to its tile.
     pub title_drag: bool,
+    /// Three-finger swipe left/right cycles the workspaces of the display
+    /// under the pointer; four-finger swipe up opens the palette.
+    pub trackpad_swipes: bool,
     /// Draw each window's app icon on its tile in the menu bar icon.
     pub menu_bar_app_icons: bool,
     /// Share of the width `layout master-stack` gives the master tile
@@ -136,6 +139,7 @@ impl Default for Settings {
             mouse_follows_focus: false,
             focus_follows_mouse: false,
             title_drag: true,
+            trackpad_swipes: false,
             menu_bar_app_icons: true,
             master_ratio: 0.6,
         }
@@ -1114,6 +1118,11 @@ focus_follows_mouse = false
 # Drag a tiled window by its title bar to swap it, split a tile or move it
 # to another display (off: it snaps back to its tile).
 title_drag = true
+# Three-finger swipe left/right shows the next/previous workspace of the
+# display under the pointer; four-finger swipe up opens the palette. Set
+# macOS's own three-finger swipes (System Settings > Trackpad > More
+# Gestures) to four fingers or off first, or both will fire.
+trackpad_swipes = false
 # Draw each window's app icon on its tile in the menu bar icon.
 menu_bar_app_icons = true
 # Width share of the large tile in `layout master-stack` (0.1 to 0.9).

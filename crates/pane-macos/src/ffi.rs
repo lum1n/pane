@@ -171,6 +171,8 @@ pub const kCGEventLeftMouseDragged: u32 = 6;
 pub const kCGEventKeyDown: u32 = 10;
 pub const kCGEventFlagsChanged: u32 = 12;
 pub const kCGEventOtherMouseDown: u32 = 25;
+/// `NSEventTypeGesture`: trackpad touches (not in the public CGEventType).
+pub const kCGEventGesture: u32 = 29;
 pub const kCGEventTapDisabledByTimeout: u32 = 0xFFFF_FFFE;
 pub const kCGEventTapDisabledByUserInput: u32 = 0xFFFF_FFFF;
 pub const kCGKeyboardEventKeycode: u32 = 9;
