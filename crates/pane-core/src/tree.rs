@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
 
-use crate::geometry::{Direction, Orientation};
+use crate::geometry::{Direction, Orientation, Rect};
 use crate::WindowId;
 
 new_key_type! {
@@ -722,7 +722,11 @@ impl Tree {
     /// that edge gives or takes space. If the tile's edge is also the edge
     /// of its container, the nearest ancestor split with a neighbour on
     /// that side is used. `present` holds the leaves that take space.
+    /// `frames` holds where present leaves are drawn now, when known: then
+    /// the two tiles split their weight by the lengths they will have,
+    /// which stays right when a minimum size keeps a tile off its weight.
     /// Returns false when nothing could change.
+    #[allow(clippy::too_many_arguments)]
     pub fn resize_edge(
         &mut self,
         id: NodeId,
@@ -731,6 +735,7 @@ impl Tree {
         cur_len: f64,
         toward_next: bool,
         present: &std::collections::HashSet<NodeId>,
+        frames: &std::collections::HashMap<NodeId, Rect>,
     ) -> bool {
         let is_present = |t: &Tree, n: NodeId| t.leaves(n).iter().any(|l| present.contains(l));
         let mut child = id;
@@ -752,10 +757,18 @@ impl Tree {
                         .map(|(_, w)| *w)
                         .sum();
                     let (wi, wj) = (c.weights[i], c.weights[j]);
-                    let per_point = wi / cur_len.max(1.0);
                     let min_w = MIN_SHARE * sum_w;
-                    let dw = (delta_len * per_point)
-                        .clamp(-(wi - min_w).max(0.0), (wj - min_w).max(0.0));
+                    let want = match (
+                        self.drawn_len(c.children[i], axis, frames),
+                        self.drawn_len(c.children[j], axis, frames),
+                    ) {
+                        // Split the pair's weight by their new lengths.
+                        (Some(li), Some(lj)) if li + lj > 1.0 => {
+                            (wi + wj) * (li + delta_len) / (li + lj) - wi
+                        }
+                        _ => delta_len * wi / cur_len.max(1.0),
+                    };
+                    let dw = want.clamp(-(wi - min_w).max(0.0), (wj - min_w).max(0.0));
                     if dw.abs() < 1e-9 {
                         return false;
                     }
@@ -768,6 +781,25 @@ impl Tree {
             child = p;
         }
         false
+    }
+
+    /// Length along `axis` that the present leaves under `id` cover in
+    /// `frames`, or None if none of them is there.
+    fn drawn_len(
+        &self,
+        id: NodeId,
+        axis: Orientation,
+        frames: &std::collections::HashMap<NodeId, Rect>,
+    ) -> Option<f64> {
+        let spans: Vec<(f64, f64)> = self
+            .leaves(id)
+            .iter()
+            .filter_map(|l| frames.get(l))
+            .map(|r| r.span(axis))
+            .collect();
+        let start = spans.iter().map(|s| s.0).reduce(f64::min)?;
+        let end = spans.iter().map(|s| s.0 + s.1).reduce(f64::max)?;
+        Some(end - start)
     }
 
     pub fn to_ser(&self, id: NodeId) -> SerNode {

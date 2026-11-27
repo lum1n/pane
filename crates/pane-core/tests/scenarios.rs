@@ -1035,9 +1035,65 @@ fn left_edge_drag_reported_as_a_move_first_still_resizes() {
     assert!(s.m.gesture.is_none());
     assert!(overlay(&fx).is_none());
     s.tick(400);
-    assert!((s.frame(2).w - (b.w + 100.0)).abs() <= 2.0, "grew: {:?}", s.frame(2));
-    assert!((s.frame(1).w - (a.w - 100.0)).abs() <= 2.0, "gave: {:?}", s.frame(1));
+    assert!(
+        (s.frame(2).w - (b.w + 100.0)).abs() <= 2.0,
+        "grew: {:?}",
+        s.frame(2)
+    );
+    assert!(
+        (s.frame(1).w - (a.w - 100.0)).abs() <= 2.0,
+        "gave: {:?}",
+        s.frame(1)
+    );
     assert!(s.frame(1).x < s.frame(2).x, "order kept");
+}
+
+#[test]
+fn edge_drag_below_a_wrongly_learned_min_size_sticks() {
+    // Seen on macOS: an app still applying an earlier resize read back the
+    // same in-between size twice, so Pane learned it as a minimum. Every
+    // drag that made the window smaller then snapped back to it.
+    let mut s = Sim::new();
+    s.tick(2000);
+    s.launch(100, "a");
+    s.window(100, 1, "w1", CENTER);
+    s.window(100, 2, "w2", CENTER);
+    let wrong = s.frame(2).w + 400.0;
+    s.m.windows.get_mut(&WindowId(2)).unwrap().min_size = Some(Size::new(wrong, 0.0));
+    s.m.layout_dirty = true;
+    s.tick(600);
+    let (a, b) = (s.frame(1), s.frame(2));
+    assert!((b.w - wrong).abs() <= 2.0, "pinned at the minimum: {b:?}");
+    s.now += 500;
+    // Drag window 2's left edge right by 600: smaller than its "minimum".
+    drag_to(&mut s, 2, Rect::new(b.x + 600.0, b.y, b.w - 600.0, b.h));
+    assert!(
+        (s.frame(2).w - (b.w - 600.0)).abs() <= 2.0,
+        "kept: {:?}",
+        s.frame(2)
+    );
+    assert!(
+        (s.frame(1).w - (a.w + 600.0)).abs() <= 2.0,
+        "neighbour took it: {:?}",
+        s.frame(1)
+    );
+    // And it stays there.
+    s.tick(3000);
+    assert!(
+        (s.frame(2).w - (b.w - 600.0)).abs() <= 2.0,
+        "stayed: {:?}",
+        s.frame(2)
+    );
+    // The weights hold the new split, not just the (lowered) minimum:
+    // without any minimum the tile keeps its size.
+    s.m.windows.get_mut(&WindowId(2)).unwrap().min_size = None;
+    s.m.layout_dirty = true;
+    s.tick(600);
+    assert!(
+        (s.frame(2).w - (b.w - 600.0)).abs() <= 2.0,
+        "weights: {:?}",
+        s.frame(2)
+    );
 }
 
 #[test]
@@ -3016,4 +3072,3 @@ fn trackpad_swipes_cycle_the_display_under_the_pointer() {
         .any(|f| matches!(f, Effect::UiRequest(UiRequest::Palette))));
     assert_eq!(s.m.visible["C"], "C/2");
 }
-

@@ -1233,6 +1233,17 @@ fn frame_changed(m: &mut Model, wid: WindowId, frame: Rect, fx: &mut Vec<Effect>
     if w.minimized || w.stubborn {
         return;
     }
+    // Seen smaller than its learned minimum: that minimum was wrong (an
+    // app still busy with an earlier resize can read back an in-between
+    // size twice). Left as it was, every edge drag below it snaps back.
+    if let Some(min) = w.min_size.as_mut() {
+        if frame.w < min.w - DRAG_THRESHOLD {
+            min.w = frame.w;
+        }
+        if frame.h < min.h - DRAG_THRESHOLD {
+            min.h = frame.h;
+        }
+    }
     let mode = w.mode;
     let ws = w.workspace.clone();
     if let Some(s) = m.last_sent.get(&wid) {
@@ -1533,6 +1544,16 @@ fn commit_drag(m: &mut Model, wid: WindowId, frame: Rect) {
         .into_iter()
         .filter(|n| m.tree.leaf(*n).is_some_and(|l| m.leaf_present(l)))
         .collect();
+    // Where the tiles were drawn before the drag: a tile held at a minimum
+    // size is not where its weight alone would put it.
+    let frames: std::collections::HashMap<NodeId, Rect> = present
+        .iter()
+        .filter_map(|n| {
+            let w = m.tree.leaf(*n)?.window()?;
+            let s = m.last_sent.get(&w).filter(|s| !s.parked)?;
+            Some((*n, s.rect))
+        })
+        .collect();
     let mut changed = false;
     for axis in [Orientation::Horizontal, Orientation::Vertical] {
         let (os, ol) = old.span(axis);
@@ -1549,7 +1570,7 @@ fn commit_drag(m: &mut Model, wid: WindowId, frame: Rect) {
         };
         changed |= m
             .tree
-            .resize_edge(node, axis, delta, ol, toward_next, &present);
+            .resize_edge(node, axis, delta, ol, toward_next, &present, &frames);
     }
     if changed {
         m.layout_dirty = true;
