@@ -8,6 +8,7 @@
 pub mod assign;
 pub mod config;
 pub mod display;
+pub mod drift;
 pub mod drop;
 pub mod effect;
 pub mod event;
@@ -26,6 +27,7 @@ pub mod snapshot;
 pub mod state;
 pub mod stream;
 pub mod tree;
+pub mod undo;
 pub mod worker;
 pub mod workspace;
 

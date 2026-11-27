@@ -23,6 +23,10 @@ pub struct Snapshot {
     /// in by the runtime.
     #[serde(default)]
     pub desk_profiles: Vec<String>,
+    /// The desk no longer matches the saved active profile
+    /// (`drift::ProfileDiff::drifted`). Filled in by the runtime.
+    #[serde(default)]
+    pub profile_drift: bool,
     #[serde(default)]
     pub ax_trusted: bool,
     /// How the shell draws the focus border and dimming.
@@ -54,6 +58,9 @@ pub struct SnapAppearance {
     pub border_color: Option<[f64; 4]>,
     /// Darkening of unfocused windows, 0..=0.8.
     pub dim_unfocused: f64,
+    /// Draw app icons on the tiles of the menu bar icon.
+    #[serde(default)]
+    pub app_icons: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -66,6 +73,9 @@ pub struct SnapDisplay {
     pub rank: usize,
     /// Name of the workspace shown ("2").
     pub visible_workspace: Option<String>,
+    /// Its `[workspace_names]` name ("web"), if it has one.
+    #[serde(default)]
+    pub visible_workspace_title: Option<String>,
     pub focused: bool,
     pub tiles: Vec<SnapTile>,
 }
@@ -96,6 +106,9 @@ pub struct SnapWorkspace {
     pub guest: bool,
     /// For menus: "2", or "DELL U2720Q: 2" for guests.
     pub label: String,
+    /// Its `[workspace_names]` name ("web"), if it has one.
+    #[serde(default)]
+    pub title: Option<String>,
     /// Pass as `name` to the `workspace` command.
     pub target: String,
     pub visible: bool,
@@ -156,6 +169,7 @@ pub fn build(m: &Model) -> Snapshot {
                 is_main: d.is_main,
                 rank: d.position_rank,
                 visible_workspace: ws.map(|w| w.name.clone()),
+                visible_workspace_title: ws.and_then(|w| m.workspace_title(w)),
                 focused: focused_display.as_deref() == Some(d.id.as_str()),
                 tiles,
             }
@@ -196,6 +210,7 @@ pub fn build(m: &Model) -> Snapshot {
                 home: w.home.clone(),
                 guest: w.is_guest(),
                 label,
+                title: m.workspace_title(w),
                 target: format!("uuid:{}:{}", w.home, w.name),
                 visible,
                 windows,
@@ -211,11 +226,13 @@ pub fn build(m: &Model) -> Snapshot {
         active_profile: m.active_profile.clone(),
         profiles: vec![],
         desk_profiles: vec![],
+        profile_drift: false,
         ax_trusted: true,
         appearance: SnapAppearance {
             border_width: m.config.settings.border_width,
             border_color: m.config.border_rgba().unwrap_or(None),
             dim_unfocused: m.config.settings.dim_unfocused,
+            app_icons: m.config.settings.menu_bar_app_icons,
         },
         scratchpads: m
             .config

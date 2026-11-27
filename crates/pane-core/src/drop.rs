@@ -39,7 +39,7 @@ fn tiles(m: &Model, tree: &Tree, ws: &str) -> Vec<(NodeId, WindowId, Rect)> {
     let Some(d) = m.display(&w.display) else {
         return vec![];
     };
-    layout_root(m, tree, w.root, m.tiling_area(d), None)
+    layout_root(m, tree, w.root, d, None)
         .frames
         .into_iter()
         .filter_map(|(n, r)| tree.leaf(n)?.window().map(|wid| (n, wid, r)))
@@ -192,7 +192,7 @@ fn insert(tree: &mut Tree, root: NodeId, src: Source, at: InsertAt) -> NodeId {
 pub fn preview(m: &Model, wid: WindowId, target: &DropTarget) -> Option<(Rect, Option<Rect>)> {
     let ws = target_ws(m, target)?;
     let w = m.ws(&ws)?;
-    let area = m.tiling_area(m.display(&w.display)?);
+    let display = m.display(&w.display)?;
     let split_rect = match target {
         DropTarget::Split { leaf, .. } => tiles(m, &m.tree, &ws)
             .into_iter()
@@ -206,7 +206,7 @@ pub fn preview(m: &Model, wid: WindowId, target: &DropTarget) -> Option<(Rect, O
         _ => Source::New(Leaf::Window(wid)),
     };
     let node = apply(&mut tree, w.root, src, target);
-    let out = layout_root(m, &tree, w.root, area, Some(wid));
+    let out = layout_root(m, &tree, w.root, display, Some(wid));
     let rect = out.frames.iter().find(|f| f.0 == node)?.1;
     Some((rect, split_rect))
 }

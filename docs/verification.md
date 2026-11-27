@@ -58,6 +58,15 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Quit Pane, change desk, start Pane: the matching profile applies at launch (instead of `startup_profile`).
 - [ ] Save the desk again under the same name, or edit the profile in the Profile Editor and save: the `[when]` stays.
 
+## Profile drift
+- [ ] Apply a saved profile: no dot on the menu bar icon. Swap two tiles of different apps, or resize one by mouse: a dot appears top right, and the Profiles submenu title ends in `•`.
+- [ ] Undo the change by re-applying the profile: the dot goes away.
+- [ ] Open apps in a workspace the profile does not mention: no dot.
+- [ ] **Update “NAME” from Current Desk…** opens the Profile Editor with the saved profile and the desk side by side; gone apps are outlined red on the left, new ones green on the right; unchanged rows are dimmed.
+- [ ] **Update Profile** saves (the dot goes away, `profiles/NAME.toml` has the new layout, title regexes and `[when]` are kept); **Edit Before Saving** shows the result in the editor without saving; **Cancel** goes back.
+- [ ] **Compare with Desk** in the editor works for any saved profile, also one that is not active.
+- [ ] Right after launch (windows still being found) no dot flashes.
+
 ## Palette
 - [ ] `mod-/` opens the palette centred on the focused display, above the focus border and dimming; typing works without Pane taking focus from the app you were in.
 - [ ] Escape, or clicking elsewhere, closes it and leaves focus where it was.
@@ -66,6 +75,12 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] A minimized window is restored when picked; a window behind a zoomed tile ends the zoom.
 - [ ] `>` lists commands with their shortcuts (⌥⇧F etc.); Enter runs one. Profiles apply.
 - [ ] Arrow keys, Page Up/Down and clicking a row work; app icons show.
+
+## Undo
+- [ ] Move, resize (keys and edge drag), swap with a gesture, toggle split direction and float: each `mod-z` puts back one step, windows land in their old tiles.
+- [ ] `mod-shift-3` then `mod-z`: the window comes back to its tile on the workspace you are on and has focus.
+- [ ] Apply a profile that shows another workspace, then `mod-z`: the previous workspace and tiles come back and the menu no longer shows the profile as active.
+- [ ] `mod-z` with nothing to undo shows an error notice and changes nothing.
 
 ## Scratchpad and summon
 - [ ] With `[[scratchpad]] app = "com.googlecode.iterm2" key = "mod-grave"` and iTerm not running, Option-` opens iTerm and its first window appears as a centered float at the configured size on the focused display, focused.
@@ -80,6 +95,17 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Settings → Scratchpads: Add Scratchpad, pick a running app, set a key and size, Save; `config.toml` gets a `[[scratchpad]]` (comments elsewhere intact) and the key works at once. Remove it and Save: the table is gone and the window is let go.
 - [ ] A bad size (`big`) shows the config error in the tab and leaves `config.toml` unchanged.
 - [ ] `pane do "summon Safari"` from another workspace moves a Safari window next to the focused tile without switching workspace; with Safari not running it opens.
+
+## Layout presets
+- [ ] Three windows on a workspace, `pane do "layout master-stack"`: the first is on the left at 60% of the width, the other two stacked on the right.
+- [ ] Open a fourth window: it joins the stack; the master keeps its width. Close the master: the next window becomes the master.
+- [ ] Widen the master with `mod-ctrl-l`, open a window: the master stays that wide.
+- [ ] `pane do "layout master-stack 70"`: the master becomes 70% wide.
+- [ ] Restart Pane: the workspace still re-shapes when a window opens. `pane query workspaces` shows its `layout`.
+- [ ] `pane do "layout columns 3"` with five windows: three equal columns (two, two, one). A sixth window makes it two, two, two.
+- [ ] `pane do "layout manual"`, open a window: it opens next to the focused tile and nothing else moves.
+- [ ] Resize a tile, then `pane do "balance"`: the tiles of that split are equal again; other splits keep their sizes.
+- [ ] Palette, `>layout`: "Layout: master and stack", "Layout: 2 columns", "Layout: 3 columns", "Layout: manual (stop re-arranging)"; `>balance`: "Balance tile sizes". Each runs.
 
 ## Event stream
 - [ ] `pane subscribe | jq -c .` in a terminal: prints `displays`, one `workspace-shown` per display, `workspaces`, `focus` and `profile` at once.
@@ -99,3 +125,20 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] **Check for Updates…** in the menu with no newer release: "You're up to date". Offline: "Couldn't check for updates" with the reason.
 - [ ] Set `CFBundleShortVersionString` in the built app's Info.plist below the latest release tag (or `defaults delete com.vegard.pane lastUpdateCheck` with an older build) and relaunch: a notice says the new version is available once, the menu starts with "Pane X Is Available…", and that item opens the release page.
 - [ ] Untick **Check for updates automatically**: no check at launch (`defaults read com.vegard.pane checkForUpdates` is 0).
+
+## Mouse follows focus, focus follows mouse
+- [ ] With `mouse_follows_focus = true`, `mod-l` to the next tile puts the pointer in its middle; `mod-l` onto the next display (also an empty one) moves the pointer there. The pointer does not stutter after a warp.
+- [ ] The pointer already over the window you focus does not move. Clicking a window or Cmd-Tab never moves the pointer.
+- [ ] `mod-2` to a workspace with windows puts the pointer on the window that gets focus, at its new place.
+- [ ] With `focus_follows_mouse = true`, resting the pointer on another tile focuses it (border follows) after a moment; sweeping across tiles quickly does not focus the ones passed over.
+- [ ] Switching workspace under a still pointer does not change focus. Holding Option and pointing (gesture) does not focus anything.
+- [ ] Both toggles in Settings > General > Focus take effect without restarting.
+
+## Doctor
+- [ ] With Pane running and permissions granted, `pane doctor` shows Accessibility and Input Monitoring for Pane (no "this terminal"), `Hotkeys: running`, the displays as in `pane query displays`, `run.lock: held by pid` Pane's pid, and exits 0.
+- [ ] Turn Pane off in Privacy & Security > Accessibility: `pane doctor` says NOT granted and exits 1.
+- [ ] `kill -STOP` an app's pid, wait for the notice: it is listed as not responding. `kill -CONT` and it goes away.
+- [ ] A window that refuses its tile (fixed-size app) is listed under its app with `refused to take its tile`.
+- [ ] Break `config.toml` (`gaps = 999`) without reloading: `Config: ERROR` with the message. Reload, fix the file, run again: "fixed on disk, but Pane still runs on defaults".
+- [ ] Quit Pane: `pane doctor` says not running, shows the terminal's permissions, the displays, and `run.lock: none`.
+- [ ] `kill -9` Pane: `run.lock: STALE` with the parked window count; starting Pane clears it.

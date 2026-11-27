@@ -20,6 +20,8 @@ final class EditorModel: ObservableObject {
     @Published var status: String?
     /// Selected workspace tab per display box (group key -> entry index).
     @Published var selectedTab: [String: Int] = [:]
+    /// Shown instead of the canvas while comparing a saved profile with the desk.
+    @Published var diff: ProfileDiff?
     private var undoStack: [Profile] = []
     private var redoStack: [Profile] = []
 
@@ -89,6 +91,40 @@ final class EditorModel: ObservableObject {
             status = "Captured the current desk"
         case let .failure(e): status = e.message
         }
+    }
+
+    /// Compare saved profile `name` (default: the open one) with the desk.
+    func compareWithDesk(_ name: String? = nil) {
+        switch PaneCore.shared.profileDiff(name: name ?? profile.name) {
+        case let .success(d):
+            diff = d
+            status = d.drifted ? nil : "The desk matches “\(d.name)”"
+        case let .failure(e): status = e.message
+        }
+    }
+
+    /// Save the profile as updated from the desk and open it.
+    func acceptDiff() {
+        guard let d = diff else { return }
+        switch PaneCore.shared.save(d.updated) {
+        case .ok:
+            replace(with: d.updated)
+            selection = nil
+            selectedTab = [:]
+            diff = nil
+            status = "Updated “\(d.name)” from the current desk"
+        case let .error(m): status = m
+        }
+    }
+
+    /// Open the updated profile in the editor without saving it.
+    func editDiff() {
+        guard let d = diff else { return }
+        replace(with: d.updated)
+        selection = nil
+        selectedTab = [:]
+        diff = nil
+        status = "Updated from the current desk; Save to keep it"
     }
 
     func load(_ name: String) {
@@ -256,13 +292,17 @@ struct EditorRootView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            HSplitView {
-                AppPaletteView()
-                    .frame(minWidth: 200, idealWidth: 230, maxWidth: 320)
-                DeskCanvasView(model: model)
-                    .frame(minWidth: 500)
-                InspectorView(model: model)
-                    .frame(minWidth: 220, idealWidth: 250, maxWidth: 320)
+            if let d = model.diff {
+                ProfileDiffView(model: model, diff: d)
+            } else {
+                HSplitView {
+                    AppPaletteView()
+                        .frame(minWidth: 200, idealWidth: 230, maxWidth: 320)
+                    DeskCanvasView(model: model)
+                        .frame(minWidth: 500)
+                    InspectorView(model: model)
+                        .frame(minWidth: 220, idealWidth: 250, maxWidth: 320)
+                }
             }
             if let s = model.status {
                 Divider()
@@ -294,6 +334,9 @@ struct EditorRootView: View {
             .frame(width: 80)
             Button("New") { model.newProfile() }
             Button("Capture Current") { model.capture() }
+            Button("Compare with Desk") { model.compareWithDesk() }
+                .disabled(!(model.snapshot?.profiles ?? []).contains(model.profile.name))
+                .help("Show how the current desk differs from the saved profile, and update it")
             Divider().frame(height: 18)
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(!model.canUndo)

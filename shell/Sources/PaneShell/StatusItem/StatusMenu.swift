@@ -6,6 +6,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     let menu = NSMenu()
     var openEditor: () -> Void = {}
     var openSettings: () -> Void = {}
+    /// Show how the desk differs from a saved profile, offering to update it.
+    var reviewDrift: (String) -> Void = { _ in }
 
     override init() {
         super.init()
@@ -47,7 +49,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 header.isEnabled = false
                 menu.addItem(header)
                 for w in s.workspaces where w.display == d.id {
-                    let title = w.windows > 0 ? "  \(w.label)  (\(w.windows))" : "  \(w.label)"
+                    let name = w.title.map { "\(w.label) · \($0)" } ?? w.label
+                    let title = w.windows > 0 ? "  \(name)  (\(w.windows))" : "  \(name)"
                     let i = item(title, #selector(showWorkspace(_:)), obj: w.target)
                     i.state = w.visible ? .on : .off
                     menu.addItem(i)
@@ -86,7 +89,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             summon.submenu = summonMenu
             summon.toolTip = "Bring an app's window to this workspace, next to the focused tile"
             menu.addItem(summon)
-            let profiles = NSMenuItem(title: s.active_profile.map { "Profile: \($0)" } ?? "Profiles", action: nil, keyEquivalent: "")
+            let drifted = s.profile_drift == true
+            let profileTitle = s.active_profile.map { "Profile: \($0)" + (drifted ? "  •" : "") } ?? "Profiles"
+            let profiles = NSMenuItem(title: profileTitle, action: nil, keyEquivalent: "")
             let sub = NSMenu()
             let desk = s.desk_profiles ?? []
             for p in s.profiles {
@@ -97,6 +102,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             }
             if !s.profiles.isEmpty { sub.addItem(.separator()) }
             if let a = s.active_profile, s.profiles.contains(a) {
+                let u = item("Update “\(a)” from Current Desk…", #selector(reviewProfileDrift(_:)), obj: a)
+                u.toolTip = drifted
+                    ? "The desk no longer matches “\(a)”. Compare them side by side, then save"
+                    : "The desk matches “\(a)”; new workspaces with windows can still be added"
+                sub.addItem(u)
                 let i = item("Apply “\(a)” on These Displays Automatically", #selector(toggleProfileAuto(_:)), obj: a)
                 i.state = desk.contains(a) ? .on : .off
                 i.toolTip = "Pane applies it by itself whenever exactly these displays are connected"
@@ -167,6 +177,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         case let .error(m): NoticeHUD.shared.show(m)
         case .ok: NoticeHUD.shared.show(on ? "“\(n)” applies on these displays" : "“\(n)” applies only by hand")
         }
+    }
+
+    @objc private func reviewProfileDrift(_ sender: NSMenuItem) {
+        guard let n = sender.representedObject as? String else { return }
+        reviewDrift(n)
     }
 
     @objc private func saveProfile() {

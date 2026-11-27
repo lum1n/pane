@@ -9,20 +9,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var editor: ProfileEditorWindow?
     private var settingsWindow: NSWindow?
     private var shownAxPrompt = false
+    private var appearanceObservation: NSKeyValueObservation?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = StatusIconRenderer.placeholder()
         statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.toolTip = "Pane"
-        statusItem.menu = statusMenu.menu
+        // No `statusItem.menu`: a click on a window's tile focuses it, any
+        // other click opens the menu (see `statusClicked`).
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusClicked(_:))
+        statusItem.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
+        // Full-colour icons (app icons on) follow light and dark menu bars.
+        appearanceObservation = statusItem.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.redrawIcon() } }
+        }
         NoticeHUD.shared.anchor = statusItem.button
         statusMenu.openEditor = { [weak self] in self?.showEditor() }
         statusMenu.openSettings = { [weak self] in self?.showSettings() }
+        statusMenu.reviewDrift = { [weak self] name in self?.reviewDrift(name) }
 
         let core = PaneCore.shared
         core.onSnapshot = { [weak self] s in
-            self?.statusItem.button?.image = StatusIconRenderer.render(s)
+            self?.redrawIcon(s)
             self?.editor?.model.snapshot = s
             FocusBorder.shared.update(s)
         }
@@ -100,10 +110,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func redrawIcon(_ snapshot: Snapshot? = nil) {
+        guard let button = statusItem.button else { return }
+        let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let s = snapshot ?? PaneCore.shared.snapshot
+        button.image = StatusIconRenderer.render(s, dark: dark)
+        button.toolTip = s?.profile_drift == true
+            ? "Pane: the desk differs from “\(s?.active_profile ?? "")”"
+            : "Pane"
+    }
+
+    /// Left click on a window's tile in the icon focuses that window; a
+    /// click anywhere else, on the focused tile, or a right/control click
+    /// opens the menu.
+    @objc private func statusClicked(_ sender: NSStatusBarButton) {
+        if let event = NSApp.currentEvent, event.type == .leftMouseDown,
+           !event.modifierFlags.contains(.control),
+           let s = PaneCore.shared.snapshot, let image = sender.image {
+            let p = sender.convert(event.locationInWindow, from: nil)
+            // The image is centred in the button; the layout's origin is top left.
+            let fromTop = sender.isFlipped ? p.y : sender.bounds.height - p.y
+            let point = CGPoint(
+                x: p.x - (sender.bounds.width - image.size.width) / 2,
+                y: fromTop - (sender.bounds.height - image.size.height) / 2
+            )
+            if let t = StatusIconRenderer.tile(at: point, in: s), let wid = t.wid, !t.focused {
+                if case let .error(m) = PaneCore.shared.send(["cmd": "focus-window", "wid": Int(wid)]) {
+                    NoticeHUD.shared.show(m)
+                }
+                return
+            }
+        }
+        // Attach the menu just for this click so the next one is ours again.
+        statusItem.menu = statusMenu.menu
+        sender.performClick(nil)
+        statusItem.menu = nil
+    }
+
     func showEditor() {
         if editor == nil { editor = ProfileEditorWindow() }
         editor?.model.snapshot = PaneCore.shared.snapshot
         editor?.show()
+    }
+
+    /// Open the editor on the diff between the desk and saved profile `name`.
+    func reviewDrift(_ name: String) {
+        showEditor()
+        editor?.model.compareWithDesk(name)
     }
 
     func showSettings() {

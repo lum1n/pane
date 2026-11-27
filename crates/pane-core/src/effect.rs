@@ -44,6 +44,11 @@ pub enum Effect {
         pid: Pid,
         wid: WindowId,
     },
+    /// Move the pointer to the middle of `rect`, unless it is already
+    /// inside it (mouse follows focus).
+    WarpPointer {
+        rect: Rect,
+    },
     /// Write `parked.json` (fsync + rename) before parking anything.
     WriteParked {
         entries: Vec<ParkedEntry>,

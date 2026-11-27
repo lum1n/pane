@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct PaneSettings: Codable, Equatable {
     var inner_gap: Double
     var outer_gap: Double
+    var smart_gaps: Bool
     var default_layout: String
     var placement_memory_days: Int
     var restore_placements: Bool
@@ -23,6 +24,9 @@ struct PaneSettings: Codable, Equatable {
     var border_width: Double
     var border_color: String
     var dim_unfocused: Double
+    var mouse_follows_focus: Bool
+    var focus_follows_mouse: Bool
+    var menu_bar_app_icons: Bool?
 }
 
 private struct ConfigReply: Codable {
@@ -300,6 +304,7 @@ private struct GeneralSettingsView: View {
                 Section("Layout") {
                     TextField("Gap between windows", value: number("inner_gap") { $0.inner_gap }, format: .number)
                     TextField("Gap at screen edges", value: number("outer_gap") { $0.outer_gap }, format: .number)
+                    Toggle("No gaps when a workspace shows one tile", isOn: toggle("smart_gaps") { $0.smart_gaps })
                     Picker("New containers", selection: Binding(
                         get: { s.default_layout },
                         set: { model.set("default_layout", $0) }
@@ -333,6 +338,17 @@ private struct GeneralSettingsView: View {
                     }
                     .onAppear { dim = s.dim_unfocused }
                     .onChange(of: s.dim_unfocused) { _, v in dim = v }
+                    Toggle("Move the pointer to the window you focus with the keyboard", isOn: toggle("mouse_follows_focus") { $0.mouse_follows_focus })
+                    Toggle("Focus the window under the pointer", isOn: toggle("focus_follows_mouse") { $0.focus_follows_mouse })
+                }
+                Section("Menu bar") {
+                    Toggle("Show app icons on the tiles", isOn: Binding(
+                        get: { model.settings?.menu_bar_app_icons ?? true },
+                        set: { model.set("menu_bar_app_icons", $0) }
+                    ))
+                    Text("Click a tile in the menu bar icon to focus its window. Name workspaces in config.toml under [workspace_names].")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section("Behaviour") {
                     Toggle("Put relaunched windows back in their tiles", isOn: toggle("restore_placements") { $0.restore_placements })

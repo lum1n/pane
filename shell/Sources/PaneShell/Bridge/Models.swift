@@ -31,6 +31,8 @@ struct SnapDisplay: Codable, Equatable {
     var is_main: Bool
     var rank: Int
     var visible_workspace: String?
+    /// Its `[workspace_names]` name, if it has one.
+    var visible_workspace_title: String?
     var focused: Bool
     var tiles: [SnapTile]
 }
@@ -47,6 +49,8 @@ struct SnapWorkspace: Codable, Equatable {
     var guest: Bool
     /// "2", or "DELL U2720Q: 2" for guests.
     var label: String
+    /// Its `[workspace_names]` name ("web"), if it has one.
+    var title: String?
     /// Pass as `name` to the `workspace` command.
     var target: String
     var visible: Bool
@@ -64,6 +68,8 @@ struct Snapshot: Codable, Equatable {
     var profiles: [String]
     /// Profiles whose `[when]` matches the connected displays.
     var desk_profiles: [String]?
+    /// The desk no longer matches the saved active profile.
+    var profile_drift: Bool?
     var ax_trusted: Bool
     var appearance: SnapAppearance?
     var scratchpads: [SnapScratchpad]?
@@ -83,6 +89,8 @@ struct SnapAppearance: Codable, Equatable {
     /// RGBA in 0...1; nil means the system accent colour.
     var border_color: [Double]?
     var dim_unfocused: Double
+    /// Draw app icons on the tiles of the menu bar icon.
+    var app_icons: Bool?
 }
 
 struct AppSlot: Codable, Equatable, Hashable {
@@ -181,6 +189,37 @@ struct Profile: Codable, Equatable {
     /// Kept as is so saving from the editor does not drop it.
     var when: ProfileCondition?
     var display: [ProfileDisplay]
+}
+
+/// `drift::EntryDiff`: one (display, workspace) of a profile against the desk.
+struct EntryDiff: Codable, Equatable {
+    var display: String
+    var workspace: String
+    /// Index into `ProfileDiff.saved.display`.
+    var saved: Int?
+    /// Index into `ProfileDiff.updated.display`; nil when the update drops it.
+    var updated: Int?
+    /// The workspace as it is on the desk now, if it holds anything.
+    var live: SerNode?
+    /// unchanged, changed, added, removed or not_connected.
+    var change: String
+    var added_apps: [String]?
+    var removed_apps: [String]?
+    var arrangement: Bool?
+    var sizes: Bool?
+
+    var added: [String] { added_apps ?? [] }
+    var removed: [String] { removed_apps ?? [] }
+}
+
+/// `drift::ProfileDiff`: how the desk differs from a saved profile.
+struct ProfileDiff: Codable, Equatable {
+    var name: String
+    var saved: Profile
+    /// What “Update Profile” saves.
+    var updated: Profile
+    var entries: [EntryDiff]
+    var drifted: Bool
 }
 
 enum Reply {

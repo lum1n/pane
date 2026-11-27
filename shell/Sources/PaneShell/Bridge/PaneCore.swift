@@ -121,6 +121,13 @@ final class PaneCore {
         request(["cmd": "profile-capture", "name": name], as: Profile.self)
     }
 
+    /// How the desk differs from saved profile `name` (nil: the active one).
+    func profileDiff(name: String?) -> Result<ProfileDiff, PaneError> {
+        var cmd: [String: Any] = ["cmd": "profile-diff"]
+        if let name { cmd["name"] = name }
+        return request(cmd, as: ProfileDiff.self)
+    }
+
     func save(_ p: Profile, startup: Bool = false) -> Reply {
         guard let pj = PaneCore.json(p) else { return .error("encode failed") }
         return send(["cmd": "profile-save", "profile": pj, "startup": startup])
