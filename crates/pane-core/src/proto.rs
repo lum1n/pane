@@ -101,6 +101,18 @@ pub enum Command {
         name: String,
         here: bool,
     },
+    /// How the live desk differs from saved profile `name` (default: the
+    /// active one): a `drift::ProfileDiff`. Handled by the runtime.
+    ProfileDiff {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Save profile `name` (default: the active one) as updated from the
+    /// live desk (`ProfileDiff.updated`). Handled by the runtime.
+    ProfileUpdate {
+        #[serde(default)]
+        name: Option<String>,
+    },
     /// Apply an editor operation to a profile and return the result.
     ProfileEdit {
         profile: Profile,
@@ -335,6 +347,12 @@ impl Command {
                 name: Some(arg(1)?.to_string()),
                 profile: None,
             },
+            "profile-diff" => Command::ProfileDiff {
+                name: (parts.len() > 1).then(|| parts[1..].join(" ")),
+            },
+            "profile-update" => Command::ProfileUpdate {
+                name: (parts.len() > 1).then(|| parts[1..].join(" ")),
+            },
             "profile-when" => {
                 let here = match arg(1)? {
                     "here" => true,
@@ -369,6 +387,7 @@ impl Command {
                 | Command::Doctor
                 | Command::ProfileList
                 | Command::ProfileLoad { .. }
+                | Command::ProfileDiff { .. }
                 | Command::Search { .. }
                 | Command::Subscribe { .. }
         )
@@ -527,6 +546,17 @@ mod tests {
             }
         );
         assert!(Command::parse("profile-when here").is_err());
+        assert_eq!(
+            Command::parse("profile-diff").unwrap(),
+            Command::ProfileDiff { name: None }
+        );
+        assert_eq!(
+            Command::parse("profile-update Home office").unwrap(),
+            Command::ProfileUpdate {
+                name: Some("Home office".into())
+            }
+        );
+        assert!(Command::parse("profile-diff work").unwrap().is_query());
         assert!(Command::parse("profile-when always work").is_err());
         assert_eq!(
             Command::parse("subscribe").unwrap(),

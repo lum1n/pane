@@ -10,10 +10,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crossbeam_channel::{select, unbounded, Receiver, Sender};
 use pane_core::config::{Chord, Config, Mods, STARTER_CONFIG};
 use pane_core::display::Display;
+use pane_core::drift::{self, ProfileDiff};
 use pane_core::effect::Effect;
 use pane_core::event::Event;
 use pane_core::model::Model;
-use pane_core::profile::ProfileCondition;
+use pane_core::profile::{Profile, ProfileCondition};
 use pane_core::proto::{Command, QueryKind, Reply, UiRequest};
 use pane_core::reconcile::reconcile;
 use pane_core::reducer::{reduce, refresh_placements};
@@ -287,6 +288,7 @@ pub fn start(platform: Arc<dyn Platform>, opts: Options) -> Result<Handle, Strin
         scanned_early: HashSet::new(),
         profiles: vec![],
         profile_whens: vec![],
+        active_saved: None,
         auto_due: None,
         auto_settle_ms: opts.auto_profile_settle.as_millis() as u64,
         trusted: false,
@@ -399,6 +401,10 @@ struct Core {
     profiles: Vec<String>,
     /// Each saved profile's `[when]`, for the snapshot and the menu.
     profile_whens: Vec<(String, ProfileCondition)>,
+    /// The active profile's saved file, by name (`None` inside when it is
+    /// not saved), for the drift dot. Reloaded when the name changes or a
+    /// profile is saved or deleted.
+    active_saved: Option<(String, Option<Profile>)>,
     /// When to choose a profile for the displays (after they settle).
     auto_due: Option<u64>,
     auto_settle_ms: u64,
@@ -793,8 +799,61 @@ impl Core {
             .filter(|(_, c)| c.score(&self.m.displays, &self.m.config).is_some())
             .map(|(n, _)| n.clone())
             .collect();
+        s.profile_drift = self.active_drifted();
         s.ax_trusted = self.trusted;
         s
+    }
+
+    /// Does the desk differ from the saved active profile? Not before the
+    /// first scan, while windows are still being found.
+    fn active_drifted(&self) -> bool {
+        match (&self.active_saved, &self.m.active_profile) {
+            (Some((n, Some(p))), Some(active)) if n == active && self.m.initial_scan_done => {
+                let live = pane_core::reducer::capture(&self.m, n);
+                drift::diff(p, &live, &self.m.displays, &self.m.config).drifted
+            }
+            _ => false,
+        }
+    }
+
+    /// Load the active profile's saved file if the active name changed.
+    fn sync_active_saved(&mut self) {
+        let want = self.m.active_profile.as_ref();
+        if self.active_saved.as_ref().map(|(n, _)| n) == want {
+            return;
+        }
+        self.active_saved = want.map(|n| {
+            let p = persist::read_profile(&self.paths.profile(n))
+                .ok()
+                .filter(|p| p.name == *n);
+            (n.clone(), p)
+        });
+    }
+
+    /// How the desk differs from saved profile `name` (default: the active one).
+    fn profile_diff(&self, name: Option<&str>) -> Result<ProfileDiff, String> {
+        let name = name
+            .map(str::to_string)
+            .or_else(|| self.m.active_profile.clone())
+            .ok_or("no profile is active")?;
+        let saved = persist::read_profile(&self.paths.profile(&name))
+            .map_err(|_| format!("no profile named `{name}`"))?;
+        let live = pane_core::reducer::capture(&self.m, &name);
+        Ok(drift::diff(&saved, &live, &self.m.displays, &self.m.config))
+    }
+
+    /// Save profile `name` (default: the active one) as updated from the desk.
+    fn profile_update(&mut self, name: Option<&str>) -> Reply {
+        let d = match self.profile_diff(name) {
+            Ok(d) => d,
+            Err(e) => return Reply::err(e),
+        };
+        let r = persist::write_profile(&self.paths.profile(&d.name), &d.updated);
+        self.refresh_profiles();
+        match r {
+            Ok(()) => Reply::data(&d.updated),
+            Err(e) => Reply::err(e),
+        }
     }
 
     fn emit_snapshot(&mut self) {
@@ -802,6 +861,7 @@ impl Core {
         if self.on_snapshot.is_none() && self.subscribers.is_empty() {
             return;
         }
+        self.sync_active_saved();
         let snap = self.snapshot();
         if let Some(sink) = &self.on_snapshot {
             if let Ok(json) = serde_json::to_string(&snap) {
@@ -910,6 +970,11 @@ impl Core {
                 self.hotkey_tx.as_ref().map(|_| self.hotkeys.is_some()),
             ))),
             Command::ProfileWhen { ref name, here } => Some(self.profile_when(name, here)),
+            Command::ProfileDiff { ref name } => Some(match self.profile_diff(name.as_deref()) {
+                Ok(d) => Reply::data(&d),
+                Err(e) => Reply::err(e),
+            }),
+            Command::ProfileUpdate { ref name } => Some(self.profile_update(name.as_deref())),
             // Re-capturing a saved profile keeps its `[when]`.
             Command::ProfileCapture { ref name } => {
                 let name = name.as_deref().unwrap_or("Captured");
@@ -970,7 +1035,10 @@ impl Core {
             },
             Command::Query {
                 what: QueryKind::Snapshot,
-            } => Some(Reply::data(&self.snapshot())),
+            } => {
+                self.sync_active_saved();
+                Some(Reply::data(&self.snapshot()))
+            }
             // The core does not know the saved profiles; add them.
             Command::Search { ref query, .. } => {
                 let cmd = Command::Search {
@@ -1023,6 +1091,7 @@ impl Core {
             .into_iter()
             .filter_map(|p| Some((p.name, p.when?)))
             .collect();
+        self.active_saved = None;
         self.snapshot_due = Some(now_ms());
     }
 

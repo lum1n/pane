@@ -6,6 +6,8 @@ import AppKit
 /// workspaces with windows, a bar under the focused display, and the name of
 /// the focused display's workspace from `[workspace_names]` beside it.
 ///
+/// A dot top right means the desk no longer matches the active profile.
+///
 /// With app icons off the image is a template, so the menu bar tints it.
 /// With them on it is drawn in full colour for `dark` or light menu bars.
 enum StatusIconRenderer {
@@ -17,6 +19,8 @@ enum StatusIconRenderer {
         struct Box { var display: SnapDisplay; var rect: CGRect }
         struct Tile { var tile: SnapTile; var rect: CGRect }
         var size: NSSize
+        /// Width of the boxes alone; a drift dot and the name come after it.
+        var deskW: CGFloat = 0
         var boxes: [Box] = []
         /// In drawing order: later tiles are on top.
         var tiles: [Tile] = []
@@ -36,9 +40,12 @@ enum StatusIconRenderer {
         let union = displays.dropFirst().reduce(displays[0].frame.cg) { $0.union($1.frame.cg) }
         let maxW = CGFloat(12 * displays.count + 4)
         let scale = min(boxH / max(union.height, 1), maxW / max(union.width, 1))
+        let drift = s.profile_drift == true
         let deskW = ceil(union.width * scale) + 2
+        let width = deskW + (drift ? 4 : 0)
 
-        var l = Layout(size: NSSize(width: deskW, height: height))
+        var l = Layout(size: NSSize(width: width, height: height))
+        l.deskW = deskW
         for d in displays {
             let f = d.frame.cg
             let r = CGRect(
@@ -68,8 +75,8 @@ enum StatusIconRenderer {
             ])
             let ts = text.size()
             l.name = text
-            l.nameOrigin = CGPoint(x: deskW + nameGap, y: (height - ts.height) / 2)
-            l.size.width = ceil(deskW + nameGap + ts.width + 1)
+            l.nameOrigin = CGPoint(x: width + nameGap, y: (height - ts.height) / 2)
+            l.size.width = ceil(width + nameGap + ts.width + 1)
         }
         return l
     }
@@ -82,6 +89,7 @@ enum StatusIconRenderer {
     static func render(_ snapshot: Snapshot?, dark: Bool = false) -> NSImage {
         guard let s = snapshot, let l = layout(s) else { return placeholder() }
         let appIcons = s.appearance?.app_icons ?? false
+        let drift = s.profile_drift == true
         // A template is tinted by the menu bar; black is the template colour.
         let ink: NSColor = appIcons && dark ? .white : .black
         // Looked up here, not while drawing.
@@ -131,6 +139,10 @@ enum StatusIconRenderer {
                     ink.setFill()
                     NSBezierPath(rect: CGRect(x: r.minX, y: r.maxY + 3.6, width: r.width, height: 1)).fill()
                 }
+            }
+            if drift {
+                ink.setFill()
+                NSBezierPath(ovalIn: CGRect(x: l.deskW + 0.4, y: boxTop - 0.5, width: 3.2, height: 3.2)).fill()
             }
 
             if let name = l.name {

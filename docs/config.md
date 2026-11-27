@@ -188,6 +188,19 @@ exact = true                     # default: no other display connected; false = 
 - A matching profile at launch takes the place of `startup_profile`.
 - `auto_profiles = false` turns it off.
 
+## Profile drift
+
+Pane compares the active profile's saved file with the desk whenever the desk changes. When a workspace the profile describes no longer matches, the menu bar icon gets a dot and the Profiles menu item a `•`.
+
+- A workspace is matched by its display (resolved, so `left` in the profile and `uuid:…` on the desk are the same display) and its name.
+- It differs when an app was added or is gone, when the tiles are arranged differently (order, splits, orientation, accordion), or when a tile's share of its row or column changed by more than 2 percentage points.
+- Apps are compared by bundle id, so two windows of one app swapping places, or a changed window title, is not drift.
+- Workspaces with windows that the profile does not mention are not drift (applying the profile leaves them alone), but the diff lists them and updating adds them.
+- Entries for displays that are not connected cannot be compared and stay as they are.
+- Nothing is compared until the startup scan has found the windows.
+
+Updating writes the desk into the profile file: changed workspaces take the desk's tree, keeping each slot's `title` regex and `launch_args` where the same app is still there; workspaces whose apps are all gone are dropped (kept empty if marked to be shown); the name and `[when]` stay. `pane profile diff [NAME]` prints the comparison as JSON (`entries[].change` is `unchanged`, `changed`, `added`, `removed` or `not_connected`; `updated` is the profile updating would save). `pane profile update [NAME]` saves it. Without a name both use the active profile.
+
 ## Shortcut commands
 
 Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are `a`-`z`, `0`-`9`, `return`, `tab`, `space`, `escape`, `comma`, `period`, `slash`, `semicolon`, `quote`, `leftbracket`, `rightbracket`, `minus`, `equal`, `backslash`, `grave`, the arrow keys (`left`, `right`, `up`, `down`) and `f1`-`f12`.
@@ -216,6 +229,7 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `scratchpad NAME` | show the `[[scratchpad]]` NAME on the focused display (opening the app, or taking its window, the first time); hide it if it is shown there and focused |
 | `summon APP` | bring a window of APP (bundle id or app name, any case) to the focused workspace, next to the focused tile, and focus it; opens APP if it has no window |
 | `profile-apply NAME` | |
+| `profile-diff [NAME]`, `profile-update [NAME]` | compare the desk with saved profile NAME (default: the active one), or save the desk into it; see [Profile drift](#profile-drift) |
 | `profile-when here\|off NAME` | `here`: apply NAME by itself whenever exactly the displays connected now are connected (writes its `[when]`); `off`: only by hand |
 | `recover`, `recover --all-apps` | |
 

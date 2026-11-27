@@ -569,6 +569,102 @@ fn subscribe_streams_events() {
 }
 
 #[test]
+fn profile_drift_and_update() {
+    let dir = temp_dir("drift");
+    let frames: Frames = Arc::default();
+    let mut opts = Options::new(Paths::new(&dir));
+    opts.hotkeys = false;
+    opts.control_socket = false;
+    opts.app_poll = Duration::from_millis(50);
+    let h = runtime::start(Arc::new(Fake::new(frames.clone())), opts).unwrap();
+    let ok = |r: Reply| {
+        let Reply::Ok { data } = r else {
+            panic!("{r:?}")
+        };
+        data
+    };
+    let snap = |h: &runtime::Handle| {
+        let data = ok(h.command(
+            Command::Query {
+                what: QueryKind::Snapshot,
+            },
+            Duration::from_secs(2),
+        ));
+        serde_json::from_value::<pane_core::snapshot::Snapshot>(data).unwrap()
+    };
+    // Two windows side by side.
+    wait_until(|| {
+        frames
+            .lock()
+            .unwrap()
+            .get(&WindowId(72))
+            .is_some_and(|r| r.x > 400.0)
+    });
+    assert!(matches!(
+        h.command(Command::ProfileDiff { name: None }, Duration::from_secs(2)),
+        Reply::Error { .. }
+    ));
+
+    let profile = ok(h.command(
+        Command::ProfileCapture {
+            name: Some("desk".into()),
+        },
+        Duration::from_secs(2),
+    ));
+    let profile: pane_core::profile::Profile = serde_json::from_value(profile).unwrap();
+    ok(h.command(
+        Command::ProfileSave {
+            profile,
+            startup: false,
+        },
+        Duration::from_secs(2),
+    ));
+    ok(h.command(
+        Command::ProfileApply {
+            name: Some("desk".into()),
+            profile: None,
+        },
+        Duration::from_secs(2),
+    ));
+    let s = snap(&h);
+    assert_eq!(s.active_profile.as_deref(), Some("desk"));
+    assert!(!s.profile_drift);
+
+    // Stack the two: the desk no longer matches the profile.
+    ok(h.command(Command::ToggleOrientation, Duration::from_secs(2)));
+    assert!(snap(&h).profile_drift);
+    let d: pane_core::drift::ProfileDiff = serde_json::from_value(ok(
+        h.command(Command::ProfileDiff { name: None }, Duration::from_secs(2))
+    ))
+    .unwrap();
+    assert!(d.drifted);
+    assert_eq!(d.name, "desk");
+    assert_eq!(d.entries.len(), 1);
+    assert_eq!(d.entries[0].change, pane_core::drift::EntryChange::Changed);
+    assert!(d.entries[0].arrangement, "{d:?}");
+
+    // Update the profile from the desk: saved, and no drift any more.
+    ok(h.command(
+        Command::ProfileUpdate { name: None },
+        Duration::from_secs(2),
+    ));
+    assert!(!snap(&h).profile_drift);
+    let text = std::fs::read_to_string(Paths::new(&dir).profile("desk")).unwrap();
+    assert!(text.contains("vertical"), "{text}");
+    let d: pane_core::drift::ProfileDiff = serde_json::from_value(ok(h.command(
+        Command::ProfileDiff {
+            name: Some("desk".into()),
+        },
+        Duration::from_secs(2),
+    )))
+    .unwrap();
+    assert!(!d.drifted);
+
+    assert!(h.shutdown(Duration::from_secs(3)));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn doctor_reports_what_the_running_app_sees() {
     let dir = temp_dir("doctor");
     std::fs::create_dir_all(&dir).unwrap();

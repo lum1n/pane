@@ -58,6 +58,15 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Quit Pane, change desk, start Pane: the matching profile applies at launch (instead of `startup_profile`).
 - [ ] Save the desk again under the same name, or edit the profile in the Profile Editor and save: the `[when]` stays.
 
+## Profile drift
+- [ ] Apply a saved profile: no dot on the menu bar icon. Swap two tiles of different apps, or resize one by mouse: a dot appears top right, and the Profiles submenu title ends in `•`.
+- [ ] Undo the change by re-applying the profile: the dot goes away.
+- [ ] Open apps in a workspace the profile does not mention: no dot.
+- [ ] **Update “NAME” from Current Desk…** opens the Profile Editor with the saved profile and the desk side by side; gone apps are outlined red on the left, new ones green on the right; unchanged rows are dimmed.
+- [ ] **Update Profile** saves (the dot goes away, `profiles/NAME.toml` has the new layout, title regexes and `[when]` are kept); **Edit Before Saving** shows the result in the editor without saving; **Cancel** goes back.
+- [ ] **Compare with Desk** in the editor works for any saved profile, also one that is not active.
+- [ ] Right after launch (windows still being found) no dot flashes.
+
 ## Palette
 - [ ] `mod-/` opens the palette centred on the focused display, above the focus border and dimming; typing works without Pane taking focus from the app you were in.
 - [ ] Escape, or clicking elsewhere, closes it and leaves focus where it was.

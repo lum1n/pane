@@ -74,6 +74,8 @@ You can also manage scratchpads in **Settings → Scratchpads**, toggle them fro
 
 Profiles can follow your displays. Apply a profile, then choose **Apply “NAME” on These Displays Automatically** in the menu's Profiles submenu (or run `pane profile auto NAME`). From then on, Pane applies that profile by itself whenever exactly those displays are connected. Plug in at the office and get the office layout; unplug and get the laptop one. It waits until the displays have settled for 5 seconds. A profile you pick by hand stays until the displays change. See [docs/config.md](docs/config.md#profiles-that-follow-the-displays).
 
+When the desk no longer matches the active profile (you moved, added or closed windows, or resized tiles in a workspace the profile describes), a dot appears at the top right of the menu bar icon. **Update “NAME” from Current Desk…** in the Profiles submenu opens the Profile Editor with the saved profile and the desk side by side, one row per display and workspace, marking apps that are gone or new. **Update Profile** saves the desk into the profile; **Edit Before Saving** opens the result in the editor. **Compare with Desk** in the editor does the same for the open profile, and `pane profile diff|update [NAME]` from a terminal. See [docs/config.md](docs/config.md#profile-drift).
+
 The menu bar icon draws your desk: each display, the visible workspace's tiles with their app icons, and the name of the workspace you are on if you gave it one. Click a window's tile to focus it; click anywhere else (or right-click) for the menu. Name workspaces in `config.toml`, shown in the icon, the menu and the palette:
 
 ```toml
@@ -93,6 +95,7 @@ The `pane` CLI talks to the running app over a Unix socket:
 ```sh
 pane ws 3                 pane query windows|displays|workspaces|tree|snapshot
 pane do "focus left"      pane profile list|apply|capture|delete|auto|manual NAME
+                          pane profile diff|update [NAME]
 pane reload               pane recover [--all-apps]
 pane search saf           pane do "focus-window 1234"
 pane do "scratchpad com.googlecode.iterm2"    pane do "summon Safari"

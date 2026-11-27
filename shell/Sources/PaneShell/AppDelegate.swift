@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NoticeHUD.shared.anchor = statusItem.button
         statusMenu.openEditor = { [weak self] in self?.showEditor() }
         statusMenu.openSettings = { [weak self] in self?.showSettings() }
+        statusMenu.reviewDrift = { [weak self] name in self?.reviewDrift(name) }
 
         let core = PaneCore.shared
         core.onSnapshot = { [weak self] s in
@@ -111,7 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func redrawIcon(_ snapshot: Snapshot? = nil) {
         guard let button = statusItem.button else { return }
         let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        button.image = StatusIconRenderer.render(snapshot ?? PaneCore.shared.snapshot, dark: dark)
+        let s = snapshot ?? PaneCore.shared.snapshot
+        button.image = StatusIconRenderer.render(s, dark: dark)
+        button.toolTip = s?.profile_drift == true
+            ? "Pane: the desk differs from “\(s?.active_profile ?? "")”"
+            : "Pane"
     }
 
     /// Left click on a window's tile in the icon focuses that window; a
@@ -145,6 +150,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if editor == nil { editor = ProfileEditorWindow() }
         editor?.model.snapshot = PaneCore.shared.snapshot
         editor?.show()
+    }
+
+    /// Open the editor on the diff between the desk and saved profile `name`.
+    func reviewDrift(_ name: String) {
+        showEditor()
+        editor?.model.compareWithDesk(name)
     }
 
     func showSettings() {
