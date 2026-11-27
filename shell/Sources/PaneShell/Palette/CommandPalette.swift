@@ -17,9 +17,14 @@ struct PaletteItem {
               let title = d["title"] as? String,
               let command = d["command"] as? [String: Any] else { return nil }
         self.kind = kind
-        self.title = title
         subtitle = d["subtitle"] as? String ?? ""
         bundleId = d["bundle_id"] as? String
+        // Unnamed scratchpads are called by their bundle id; show the app.
+        if let b = bundleId, title.contains(b) {
+            self.title = title.replacingOccurrences(of: b, with: AppIcons.name(for: b))
+        } else {
+            self.title = title
+        }
         shortcut = d["shortcut"] as? String
         current = d["current"] as? Bool ?? false
         self.command = command

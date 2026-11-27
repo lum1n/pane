@@ -319,11 +319,28 @@ fn command_items(m: &Model, with_summon: bool) -> Vec<PaletteItem> {
             if matches!(command, Command::Palette) {
                 return None;
             }
+            // A scratchpad row carries its app, so the shell shows the
+            // icon; an unnamed one (named after its bundle id) shows the
+            // app's name instead.
+            let pad = text
+                .strip_prefix("scratchpad ")
+                .and_then(|n| m.config.scratchpads.iter().find(|s| s.name() == n));
+            let title = match pad {
+                Some(s) if s.name.is_none() => {
+                    let app = m
+                        .apps
+                        .values()
+                        .find(|a| a.bundle_id == s.app && !a.name.is_empty())
+                        .map_or(s.app.as_str(), |a| a.name.as_str());
+                    format!("Toggle scratchpad {app}")
+                }
+                _ => humanize(&text),
+            };
             Some(PaletteItem {
                 kind: ItemKind::Command,
-                title: humanize(&text),
+                title,
                 subtitle: "Command".into(),
-                bundle_id: None,
+                bundle_id: pad.map(|s| s.app.clone()),
                 shortcut: chord,
                 command,
                 current: false,

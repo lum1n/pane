@@ -197,6 +197,15 @@ enum Shortcut {
         return named + order.filter { parts.contains($0) }.compactMap { symbols[$0] } + [prettyKey(key)]
     }
 
+    /// Replace `mod` in a chord with the configured modifier keys, so
+    /// `mod-x` draws as ⌥ X rather than "Mod X".
+    static func resolving(_ chord: String, modifier: String) -> String {
+        let f = flags(modifier)
+        let mods = [f.ctrl ? "ctrl" : nil, f.alt ? "alt" : nil, f.shift ? "shift" : nil, f.cmd ? "cmd" : nil].compactMap { $0 }
+        guard !mods.isEmpty else { return chord }
+        return chord.split(separator: "-").flatMap { p -> [String] in p == "mod" ? mods : [String(p)] }.joined(separator: "-")
+    }
+
     static func prettyKey(_ k: String) -> String {
         let named: [String: String] = [
             "return": "↩", "tab": "⇥", "space": "Space", "escape": "⎋", "backspace": "⌫",

@@ -81,8 +81,6 @@ struct ScratchpadsPane: View {
                             .disabled(selection == nil)
                     )
                 )
-            } header: {
-                Text("Scratchpads")
             } footer: {
                 Text("A scratchpad is an app you call up with one key and dismiss with the same key. It shows the app's window as a centred float on the display you're working on. Keys can also be changed on the Shortcuts tab.")
                     .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -100,16 +98,13 @@ struct ScratchpadsPane: View {
 
     private func row(_ sp: SnapScratchpad) -> some View {
         HStack(spacing: 8) {
-            AppIconView(bundleId: sp.app, size: 20)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(sp.name == sp.app ? AppIcons.name(for: sp.app) : sp.name)
-                Text(sp.app).font(.caption).foregroundStyle(.secondary)
-            }
+            AppIconView(bundleId: sp.app, size: 24)
+            Text(sp.displayName)
             Spacer()
             if let size = sp.size, !size.isEmpty {
                 Text(size).font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            KeycapView(chord: sp.key)
+            KeycapView(chord: sp.key.map { Shortcut.resolving($0, modifier: model.settings?.modifier ?? "alt") })
         }
     }
 }
@@ -131,25 +126,29 @@ private struct ScratchpadEditor: View {
             Form {
                 Section {
                     LabeledContent("App") {
-                        HStack(spacing: 6) {
-                            if valid { AppIconView(bundleId: draft.app, size: 18) }
-                            TextField("App", text: $draft.app, prompt: Text("Bundle ID"))
-                                .labelsHidden()
-                            Menu {
-                                ForEach(KnownApp.running(), id: \.self) { a in
-                                    Button { draft.app = a.id } label: {
-                                        Label { Text(a.name) } icon: { Image(nsImage: AppIcons.small(for: a.id)) }
+                        Menu {
+                            let running = KnownApp.running()
+                            if !running.isEmpty {
+                                Section("Running Apps") {
+                                    ForEach(running, id: \.self) { a in
+                                        Button { draft.app = a.id } label: {
+                                            Label { Text(a.name) } icon: { Image(nsImage: AppIcons.small(for: a.id)) }
+                                        }
                                     }
                                 }
-                            } label: {
-                                Image(systemName: "chevron.up.chevron.down")
+                                Divider()
                             }
-                            .menuStyle(.button)
-                            .buttonStyle(.borderless)
-                            .menuIndicator(.hidden)
-                            .fixedSize()
-                            .help("Pick a running app")
+                            Button("Choose Application…") {
+                                if let b = AppChooser.choose(multiple: false).first { draft.app = b }
+                            }
+                        } label: {
+                            if valid {
+                                Label { Text(AppIcons.name(for: draft.app)) } icon: { Image(nsImage: AppIcons.small(for: draft.app)) }
+                            } else {
+                                Text("Choose an App")
+                            }
                         }
+                        .fixedSize()
                     }
                     TextField("Name", text: $draft.name, prompt: Text(valid ? AppIcons.name(for: draft.app) : "Same as the app"))
                     TextField("Key", text: $draft.key, prompt: Text("mod-grave"))

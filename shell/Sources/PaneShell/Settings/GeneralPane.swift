@@ -45,15 +45,13 @@ struct GeneralPane: View {
                 } footer: {
                     footer("Click a tile in the menu bar icon to focus its window. Name workspaces in config.toml under [workspace_names].")
                 }
-                behaviourSection(s)
+                placementSection(s)
+                profileSection(s)
             }
             configSection
-            Section("Recovery") {
-                Text("If windows ever go missing, use “Restore All Windows” in the menu or run `pane recover --all-apps`.")
-                    .foregroundStyle(.secondary)
-            }
+            recoverySection
         }
-        .settingsPane(model, height: 640)
+        .settingsPane(model, height: 680)
         .onAppear {
             axGranted = Permissions.accessibilityGranted
             login = LaunchAtLogin.state
@@ -145,7 +143,7 @@ struct GeneralPane: View {
         }
     }
 
-    private func behaviourSection(_ s: PaneSettings) -> some View {
+    private func placementSection(_ s: PaneSettings) -> some View {
         Section {
             Toggle("Put relaunched windows back in their tiles", isOn: model.toggle("restore_placements") { $0.restore_placements })
             LabeledContent("Remember placements for") {
@@ -156,6 +154,14 @@ struct GeneralPane: View {
                     Text("\(s.placement_memory_days) days").monospacedDigit()
                 }
             }
+            .disabled(!s.restore_placements)
+        } header: {
+            Text("Window Placement")
+        }
+    }
+
+    private func profileSection(_ s: PaneSettings) -> some View {
+        Section {
             Picker("Default profile", selection: Binding(
                 get: { s.startup_profile ?? "" },
                 set: { $0.isEmpty ? model.clear("startup_profile") : model.set("startup_profile", $0) }
@@ -164,35 +170,61 @@ struct GeneralPane: View {
                 ForEach(PaneCore.shared.snapshot?.profiles ?? [], id: \.self) { Text($0).tag($0) }
             }
         } header: {
-            Text("Behaviour")
+            Text("Profiles")
         } footer: {
-            footer("The default profile is applied at launch when no profile is active. A profile you apply stays active, also across restarts, until you apply another.")
+            footer("Applied at launch when no profile is active. A profile you apply stays active, also across restarts, until you apply another.")
         }
+    }
+
+    /// The config path with the home folder shown as `~`.
+    private var configPathForDisplay: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let path = configURL.path
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 
     private var configSection: some View {
         Section {
-            LabeledContent("config.toml") {
-                Text(configURL.path)
-                    .font(.system(.callout, design: .monospaced))
+            LabeledContent {
+                HStack(spacing: 6) {
+                    Button { model.reload() } label: { Image(systemName: "arrow.clockwise") }
+                        .help("Reload config.toml from disk")
+                        .accessibilityLabel("Reload")
+                    Button { NSWorkspace.shared.activateFileViewerSelecting([configURL]) } label: { Image(systemName: "folder") }
+                        .help("Show in Finder")
+                        .accessibilityLabel("Show in Finder")
+                    Button("Open") { NSWorkspace.shared.open(configURL) }
+                        .help("Open config.toml in your editor")
+                }
+            } label: {
+                Text("config.toml")
+                Text(configPathForDisplay)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             if let e = model.configError {
-                Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                Label(e, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                Button("Open in Editor") { NSWorkspace.shared.open(configURL) }
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([configURL]) }
-                Spacer()
-                Button("Reload") { model.reload() }
-            }
-            .buttonStyle(.bordered)
         } header: {
             Text("Configuration File")
         } footer: {
-            footer("Displays, workspaces and window rules are edited in the file. Changes here are written to it, keeping your comments.")
+            footer("Displays, workspaces and window rules are edited in the file. Changes made here are written to it, keeping your comments.")
+        }
+    }
+
+    private var recoverySection: some View {
+        Section {
+            LabeledContent {
+                Button("Restore All Windows") { PaneCore.shared.recover() }
+            } label: {
+                Text("Missing windows")
+                Text("Brings every window back on screen. From a terminal: `pane recover --all-apps`")
+            }
+        } header: {
+            Text("Recovery")
         }
     }
 }

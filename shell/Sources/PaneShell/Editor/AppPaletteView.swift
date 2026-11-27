@@ -46,6 +46,8 @@ enum AppIcons {
         let image: NSImage
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
             image = NSWorkspace.shared.icon(forFile: url.path)
+        } else if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first?.icon {
+            image = running
         } else {
             image = NSImage(systemSymbolName: "questionmark.app", accessibilityDescription: nil) ?? NSImage()
         }
@@ -61,12 +63,25 @@ enum AppIcons {
         return image
     }
 
+    /// The app's display name. Bundle ids are never shown: an app that is
+    /// neither installed nor running falls back to the id's last part
+    /// (`com.example.Foo` -> "Foo"); globs and executable names stay as is.
     static func name(for bundleId: String) -> String {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
             return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
         }
-        return bundleId
+        if let n = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first?.localizedName {
+            return n
+        }
+        if bundleId.contains("*") || !bundleId.contains(".") { return bundleId }
+        return bundleId.split(separator: ".").last.map(String.init) ?? bundleId
     }
+}
+
+extension SnapScratchpad {
+    /// Its name, or the app's name when it isn't named (the core then
+    /// calls it by its bundle id).
+    var displayName: String { name == app ? AppIcons.name(for: app) : name }
 }
 
 /// The editor's sidebar: apps to drag onto tiles, running ones first.

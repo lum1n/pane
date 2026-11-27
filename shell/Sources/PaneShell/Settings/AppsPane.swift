@@ -25,13 +25,28 @@ struct AppsPane: View {
     }
 }
 
-/// One rule list: app rows, then the +/− bar.
+/// Picks apps in an open panel, starting in /Applications.
 @MainActor
-private struct AppRuleSection: View {
+enum AppChooser {
+    static func choose(multiple: Bool) -> [String] {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = multiple
+        guard panel.runModal() == .OK else { return [] }
+        return panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }
+    }
+}
+
+/// An app list setting: app rows (icon and name), then the +/− bar.
+@MainActor
+struct AppRuleSection: View {
     let title: String
     let footer: String
     let apps: [String]
     let onChange: ([String]) -> Void
+    /// Offer "Enter Pattern…" (globs and executable names).
+    var allowsPatterns = true
     @State private var selection: String?
     @State private var enteringId = false
 
@@ -48,15 +63,8 @@ private struct AppRuleSection: View {
     }
 
     private func chooseApplication() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.application]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.allowsMultipleSelection = true
-        guard panel.runModal() == .OK else { return }
         var list = apps
-        for url in panel.urls {
-            if let b = Bundle(url: url)?.bundleIdentifier, !list.contains(b) { list.append(b) }
-        }
+        for b in AppChooser.choose(multiple: true) where !list.contains(b) { list.append(b) }
         if list != apps { onChange(list) }
     }
 
@@ -73,11 +81,8 @@ private struct AppRuleSection: View {
             } else {
                 ForEach(apps, id: \.self) { id in
                     HStack(spacing: 8) {
-                        AppIconView(bundleId: id, size: 20)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(AppIcons.name(for: id))
-                            Text(id).font(.caption).foregroundStyle(.secondary)
-                        }
+                        AppIconView(bundleId: id, size: 24)
+                        Text(AppIcons.name(for: id))
                         Spacer()
                     }
                     .modifier(SelectableRow(selected: selection == id))
@@ -100,7 +105,9 @@ private struct AppRuleSection: View {
                         Divider()
                     }
                     Button("Choose Application…") { chooseApplication() }
-                    Button("Enter Bundle ID or Glob…") { enteringId = true }
+                    if allowsPatterns {
+                        Button("Enter Pattern…") { enteringId = true }
+                    }
                 } label: {
                     Image(systemName: "plus").frame(width: 20, height: 18)
                 }
@@ -108,7 +115,8 @@ private struct AppRuleSection: View {
         } header: {
             Text(title)
         } footer: {
-            Text(footer).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            // LocalizedStringKey, so the `code` spans render.
+            Text(LocalizedStringKey(footer)).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .sheet(isPresented: $enteringId) {
             BundleIdSheet(title: "Add to “\(title)”") { add($0) }
