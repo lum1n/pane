@@ -270,6 +270,10 @@ impl Command {
                     .trim_start_matches('+')
                     .parse()
                     .map_err(|_| format!("`{s}`: bad amount"))?;
+                // "nan" and "inf" parse as f64 but would wreck the weights.
+                if !pct.is_finite() {
+                    return Err(format!("`{s}`: bad amount"));
+                }
                 Command::Resize {
                     axis,
                     delta: pct / 100.0,
