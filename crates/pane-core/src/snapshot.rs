@@ -23,6 +23,10 @@ pub struct Snapshot {
     /// in by the runtime.
     #[serde(default)]
     pub desk_profiles: Vec<String>,
+    /// The desk no longer matches the saved active profile
+    /// (`drift::ProfileDiff::drifted`). Filled in by the runtime.
+    #[serde(default)]
+    pub profile_drift: bool,
     #[serde(default)]
     pub ax_trusted: bool,
     /// How the shell draws the focus border and dimming.
@@ -211,6 +215,7 @@ pub fn build(m: &Model) -> Snapshot {
         active_profile: m.active_profile.clone(),
         profiles: vec![],
         desk_profiles: vec![],
+        profile_drift: false,
         ax_trusted: true,
         appearance: SnapAppearance {
             border_width: m.config.settings.border_width,

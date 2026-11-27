@@ -3,7 +3,8 @@ import AppKit
 /// Draws the live desk as an 18 pt template image: one rounded box per
 /// display in its real arrangement, the visible workspace's tiles inside
 /// (focused tile solid), dots for other workspaces with windows, and a bar
-/// under the focused display.
+/// under the focused display. A dot top right means the desk no longer
+/// matches the active profile.
 enum StatusIconRenderer {
     static let height: CGFloat = 18
 
@@ -15,7 +16,9 @@ enum StatusIconRenderer {
         let boxH: CGFloat = 12
         let maxW = CGFloat(12 * displays.count + 4)
         let scale = min(boxH / max(union.height, 1), maxW / max(union.width, 1))
-        let width = ceil(union.width * scale) + 2
+        let drift = s.profile_drift == true
+        let desk = ceil(union.width * scale) + 2
+        let width = desk + (drift ? 4 : 0)
 
         let image = NSImage(size: NSSize(width: width, height: height), flipped: true) { _ in
             NSColor.black.setStroke()
@@ -61,6 +64,10 @@ enum StatusIconRenderer {
                     NSColor.black.setFill()
                     NSBezierPath(rect: CGRect(x: r.minX, y: r.maxY + 3.6, width: r.width, height: 1)).fill()
                 }
+            }
+            if drift {
+                NSColor.black.setFill()
+                NSBezierPath(ovalIn: CGRect(x: desk + 0.4, y: boxTop - 0.5, width: 3.2, height: 3.2)).fill()
             }
             return true
         }

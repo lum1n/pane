@@ -1572,7 +1572,9 @@ fn command(m: &mut Model, cmd: Command, fx: &mut Vec<Effect>) -> Reply {
         | Command::ProfileLoad { .. }
         | Command::ProfileDelete { .. }
         | Command::ProfileList
-        | Command::ProfileWhen { .. } => Reply::err("profile storage is handled by the runtime"),
+        | Command::ProfileWhen { .. }
+        | Command::ProfileDiff { .. }
+        | Command::ProfileUpdate { .. } => Reply::err("profile storage is handled by the runtime"),
         Command::Ping => Reply::data(&"pong"),
         Command::Subscribe { .. } => Reply::err("subscribe works only over the control socket"),
         Command::Gesture { phase } => cmd_gesture(m, phase, fx),

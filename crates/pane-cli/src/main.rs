@@ -41,7 +41,9 @@ enum Cmd {
     Reload,
     /// Profiles: list | apply NAME | capture NAME | show NAME | delete NAME |
     /// auto NAME (apply by itself on the displays connected now) |
-    /// manual NAME (only when applied by hand).
+    /// manual NAME (only when applied by hand) |
+    /// diff [NAME] (how the desk differs from it; default: the active one) |
+    /// update [NAME] (save it as the desk is now; default: the active one).
     Profile {
         action: String,
         name: Option<String>,
@@ -144,6 +146,8 @@ fn build(c: &Cmd) -> Result<Command, String> {
                     name: need()?,
                     here: false,
                 },
+                "diff" => Command::ProfileDiff { name: name.clone() },
+                "update" => Command::ProfileUpdate { name: name.clone() },
                 other => return Err(format!("unknown profile action `{other}`")),
             }
         }
