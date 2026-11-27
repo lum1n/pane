@@ -3,6 +3,7 @@
 //! and a listen-only tap for the pointer and modifier keys (it can never
 //! delay the cursor).
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -20,6 +21,8 @@ use crate::ffi::*;
 
 /// macOS keycode of Escape.
 const KEY_ESCAPE: u16 = 53;
+/// Pointer travel (points) between two `Command::Hover`s.
+const HOVER_STEP: f64 = 4.0;
 
 type Table = HashMap<(u16, u8), Command>;
 
@@ -27,10 +30,31 @@ struct TapState {
     table: Arc<RwLock<Table>>,
     suspended: Arc<AtomicBool>,
     gesture: Arc<Mutex<GestureTracker>>,
+    /// Focus follows mouse is on: report pointer moves.
+    hover: Arc<AtomicBool>,
+    /// Where the last `Hover` was sent (tap thread only).
+    last_hover: Cell<Option<Point>>,
     tx: Sender<Command>,
 }
 
 impl TapState {
+    /// Focus follows mouse: report where the pointer went, every few points,
+    /// unless the gesture modifier is held.
+    fn hover(&self, at: Point) {
+        if !self.hover.load(Ordering::Relaxed) || self.with_tracker(|t| t.is_busy()) != Some(false)
+        {
+            return;
+        }
+        let far = self
+            .last_hover
+            .get()
+            .is_none_or(|p| (p.x - at.x).hypot(p.y - at.y) >= HOVER_STEP);
+        if far {
+            self.last_hover.set(Some(at));
+            let _ = self.tx.send(Command::Hover { at });
+        }
+    }
+
     fn send_phase(&self, phase: Option<GesturePhase>) {
         if let Some(phase) = phase {
             let _ = self.tx.send(Command::Gesture { phase });
@@ -136,7 +160,9 @@ unsafe extern "C" fn mouse_cb(
         }
         kCGEventMouseMoved => {
             let (m, p) = (event_mods(event), event_point(event));
-            st.with_tracker(|t| t.on_mouse_moved(m, p)).flatten()
+            let phase = st.with_tracker(|t| t.on_mouse_moved(m, p)).flatten();
+            st.hover(p);
+            phase
         }
         kCGEventFlagsChanged => {
             let (m, p) = (event_mods(event), event_point(event));
@@ -157,6 +183,7 @@ pub struct Hotkeys {
     table: Arc<RwLock<Table>>,
     suspended: Arc<AtomicBool>,
     gesture: Arc<Mutex<GestureTracker>>,
+    hover: Arc<AtomicBool>,
     tx: Sender<Command>,
 }
 
@@ -174,11 +201,14 @@ impl Hotkeys {
         let tracker = Arc::new(Mutex::new(GestureTracker::new(
             gesture.as_ref().map(mod_bits),
         )));
+        let hover = Arc::new(AtomicBool::new(false));
         let (ok_tx, ok_rx) = crossbeam_channel::bounded(1);
         let state = Box::new(TapState {
             table: table.clone(),
             suspended: suspended.clone(),
             gesture: tracker.clone(),
+            hover: hover.clone(),
+            last_hover: Cell::new(None),
             tx: tx.clone(),
         });
         std::thread::Builder::new()
@@ -234,6 +264,7 @@ impl Hotkeys {
                 table,
                 suspended,
                 gesture: tracker,
+                hover,
                 tx,
             }),
             _ => Err("could not create the keyboard event tap (grant Accessibility, and Input Monitoring if asked)".into()),
@@ -242,6 +273,11 @@ impl Hotkeys {
 
     pub fn set_suspended(&self, s: bool) {
         self.suspended.store(s, Ordering::Relaxed);
+    }
+
+    /// Focus follows mouse: send `Command::Hover` as the pointer moves.
+    pub fn set_hover(&self, on: bool) {
+        self.hover.store(on, Ordering::Relaxed);
     }
 
     pub fn update(&self, bindings: &[(Chord, Command)], gesture: Option<Mods>) {

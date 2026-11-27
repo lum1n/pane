@@ -31,6 +31,8 @@ struct SnapDisplay: Codable, Equatable {
     var is_main: Bool
     var rank: Int
     var visible_workspace: String?
+    /// Its `[workspace_names]` name, if it has one.
+    var visible_workspace_title: String?
     var focused: Bool
     var tiles: [SnapTile]
 }
@@ -47,6 +49,8 @@ struct SnapWorkspace: Codable, Equatable {
     var guest: Bool
     /// "2", or "DELL U2720Q: 2" for guests.
     var label: String
+    /// Its `[workspace_names]` name ("web"), if it has one.
+    var title: String?
     /// Pass as `name` to the `workspace` command.
     var target: String
     var visible: Bool
@@ -85,6 +89,8 @@ struct SnapAppearance: Codable, Equatable {
     /// RGBA in 0...1; nil means the system accent colour.
     var border_color: [Double]?
     var dim_unfocused: Double
+    /// Draw app icons on the tiles of the menu bar icon.
+    var app_icons: Bool?
 }
 
 struct AppSlot: Codable, Equatable, Hashable {

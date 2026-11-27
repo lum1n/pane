@@ -27,6 +27,7 @@ pub mod snapshot;
 pub mod state;
 pub mod stream;
 pub mod tree;
+pub mod undo;
 pub mod worker;
 pub mod workspace;
 

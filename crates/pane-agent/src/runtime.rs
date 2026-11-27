@@ -484,8 +484,18 @@ impl Core {
 
     fn reduce(&mut self, e: Event) {
         let now = now_ms();
+        // Pointer moves arrive many times a second and rarely change
+        // anything: don't schedule a reconcile for each.
+        let hover = matches!(
+            &e,
+            Event::Command {
+                cmd: Command::Hover { .. },
+                ..
+            }
+        );
         let m = &mut self.m;
         match catch_unwind(AssertUnwindSafe(|| reduce(m, e, now))) {
+            Ok(fx) if hover && fx.is_empty() && !self.m.layout_dirty => return,
             Ok(fx) => self.dispatch(fx),
             Err(_) => {
                 // Resynchronise: forget what was sent so the next reconcile
@@ -580,7 +590,10 @@ impl Core {
         let bindings = self.m.config.bindings().unwrap_or_default();
         let gesture = self.m.config.gesture_mods().ok().flatten();
         match self.platform.start_hotkeys(&bindings, gesture, tx) {
-            Ok(h) => self.hotkeys = Some(h),
+            Ok(h) => {
+                h.set_hover(self.m.config.settings.focus_follows_mouse);
+                self.hotkeys = Some(h);
+            }
             Err(e) => {
                 tracing::warn!("hotkeys: {e}");
                 self.request(UiRequest::warn(format!("Hotkeys unavailable: {e}")));
@@ -692,6 +705,7 @@ impl Core {
                     }
                 }
                 Effect::FocusDesktop => self.platform.focus_desktop(),
+                Effect::WarpPointer { rect } => self.platform.warp_pointer(rect),
                 Effect::Raise { pid, wid } => {
                     if let Some(w) = self.workers.get(&pid) {
                         w.send(WorkerCmd::Raise { wid });
@@ -884,11 +898,13 @@ impl Core {
                 Ok(c) => {
                     let bindings = c.bindings().unwrap_or_default();
                     let gesture = c.gesture_mods().ok().flatten();
+                    let hover = c.settings.focus_follows_mouse;
                     self.reduce(Event::ConfigLoaded {
                         config: Box::new(c),
                     });
                     if let Some(h) = &self.hotkeys {
                         h.update(&bindings, gesture);
+                        h.set_hover(hover);
                     }
                     Reply::ok()
                 }
@@ -947,6 +963,12 @@ impl Core {
         let local = match cmd {
             Command::Reload => Some(self.load_config()),
             Command::ProfileList => Some(Reply::data(&self.profiles)),
+            Command::Doctor => Some(Reply::data(&crate::doctor::Live::from_model(
+                &self.m,
+                self.platform.ax_trusted(false),
+                self.platform.input_monitoring(),
+                self.hotkey_tx.as_ref().map(|_| self.hotkeys.is_some()),
+            ))),
             Command::ProfileWhen { ref name, here } => Some(self.profile_when(name, here)),
             Command::ProfileDiff { ref name } => Some(match self.profile_diff(name.as_deref()) {
                 Ok(d) => Reply::data(&d),
