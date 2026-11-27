@@ -127,6 +127,9 @@ pub enum Command {
         suspended: bool,
     },
     Ping,
+    /// Health report (`pane doctor`): permissions, displays, troubled apps,
+    /// the config error. Handled by the runtime.
+    Doctor,
     /// Focus a window wherever it is: show its workspace (on its display)
     /// first, and restore it if minimized.
     FocusWindow {
@@ -355,6 +358,7 @@ impl Command {
             self,
             Command::Query { .. }
                 | Command::Ping
+                | Command::Doctor
                 | Command::ProfileList
                 | Command::ProfileLoad { .. }
                 | Command::Search { .. }

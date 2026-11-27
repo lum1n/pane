@@ -84,7 +84,14 @@ pane reload               pane recover [--all-apps]
 pane search saf           pane do "focus-window 1234"
 pane do "scratchpad com.googlecode.iterm2"    pane do "summon Safari"
 pane subscribe [focus|workspace-shown|workspaces|displays|profile] [--snapshot]
+pane doctor [--json]
 ```
+
+### When something is off: `pane doctor`
+
+`pane doctor` prints one report: whether Pane has Accessibility and Input Monitoring and its hotkeys run, the displays it sees, apps that are not responding or have windows Pane gave up tiling (with each window's reason), errors in `config.toml`, and a stale `run.lock` left by a run that crashed. It exits 1 when it finds a problem; `--json` prints the same report as JSON.
+
+It also works when Pane is not running. Then the permissions shown are the terminal's (macOS grants them per app, so they say nothing about Pane's), and the list of troubled apps is unknown; displays, config and the lock are still checked.
 
 ### Scripting with `pane subscribe`
 

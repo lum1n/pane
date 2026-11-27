@@ -567,3 +567,48 @@ fn subscribe_streams_events() {
     assert!(matches!(r, Reply::Error { .. }), "{r:?}");
     h.shutdown(Duration::from_secs(2));
 }
+
+#[test]
+fn doctor_reports_what_the_running_app_sees() {
+    let dir = temp_dir("doctor");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config.toml"), "[settings]\ngaps = 999\n").unwrap();
+    let platform = Arc::new(Fake::new(Arc::default()));
+    let mut opts = Options::new(Paths::new(&dir));
+    opts.hotkeys = false;
+    opts.app_poll = Duration::from_millis(50);
+    let h = runtime::start(platform.clone(), opts).unwrap();
+
+    let live = || {
+        let r = pane_agent::control::request(
+            &dir.join("pane.sock"),
+            &Command::Doctor,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let Reply::Ok { data } = r else {
+            panic!("{r:?}")
+        };
+        serde_json::from_value::<pane_agent::doctor::Live>(data).unwrap()
+    };
+    wait_until(|| live().displays.len() == 1 && live().config_error.is_some());
+    let l = live();
+    assert_eq!(l.pid, std::process::id());
+    assert!(l.ax_trusted);
+    assert_eq!(l.hotkeys, None);
+    assert!(l.apps.is_empty());
+
+    let report = pane_agent::doctor::gather(
+        &Paths::new(&dir),
+        Ok(l),
+        &pane_agent::platform::NullPlatform,
+    );
+    assert_eq!(
+        report.lock.state,
+        pane_agent::lockfile::LockState::Held {
+            pid: std::process::id() as i32
+        }
+    );
+    assert!(report.config.error.as_deref().unwrap().contains("gaps"));
+    h.shutdown(Duration::from_secs(2));
+}
