@@ -74,6 +74,8 @@ You can also manage scratchpads in **Settings → Scratchpads**, toggle them fro
 
 Profiles can follow your displays. Apply a profile, then choose **Apply “NAME” on These Displays Automatically** in the menu's Profiles submenu (or run `pane profile auto NAME`). From then on, Pane applies that profile by itself whenever exactly those displays are connected. Plug in at the office and get the office layout; unplug and get the laptop one. It waits until the displays have settled for 5 seconds. A profile you pick by hand stays until the displays change. See [docs/config.md](docs/config.md#profiles-that-follow-the-displays).
 
+Layout presets arrange a workspace for you. `layout master-stack` puts one large tile on the left (60% wide, `master_ratio`) and stacks the rest on the right; `layout columns 3` deals the tiles into three equal columns. The workspace keeps that shape as windows open and close, until `layout manual`. `balance` gives the tiles of the focused container equal sizes again. Run them from the palette (`>layout`, `>balance`) or bind them in `[shortcuts]`. See [docs/config.md](docs/config.md#layout-presets).
+
 The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
 
 The `pane` CLI talks to the running app over a Unix socket:
@@ -85,7 +87,14 @@ pane reload               pane recover [--all-apps]
 pane search saf           pane do "focus-window 1234"
 pane do "scratchpad com.googlecode.iterm2"    pane do "summon Safari"
 pane subscribe [focus|workspace-shown|workspaces|displays|profile] [--snapshot]
+pane doctor [--json]
 ```
+
+### When something is off: `pane doctor`
+
+`pane doctor` prints one report: whether Pane has Accessibility and Input Monitoring and its hotkeys run, the displays it sees, apps that are not responding or have windows Pane gave up tiling (with each window's reason), errors in `config.toml`, and a stale `run.lock` left by a run that crashed. It exits 1 when it finds a problem; `--json` prints the same report as JSON.
+
+It also works when Pane is not running. Then the permissions shown are the terminal's (macOS grants them per app, so they say nothing about Pane's), and the list of troubled apps is unknown; displays, config and the lock are still checked.
 
 ### Scripting with `pane subscribe`
 

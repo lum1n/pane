@@ -1,6 +1,6 @@
 //! Desired frames -> `SetFrame` effects, with retries and parking.
 
-use crate::display::park_rect;
+use crate::display::{park_rect, Display};
 use crate::effect::Effect;
 use crate::geometry::{Rect, Size};
 use crate::layout::{self, LayoutInput};
@@ -13,24 +13,27 @@ use crate::WindowId;
 const MAX_OVERFLOW_PASSES: usize = 8;
 
 /// Lay out the workspace tree at `root` (in `tree`, which may be a scratch
-/// copy of `m.tree`) inside `area`. `also_present` counts as a tiled window
-/// even if it is floating now (a gesture preview).
+/// copy of `m.tree`) on `display`, with that display's gaps. `also_present`
+/// counts as a tiled window even if it is floating now (a gesture preview).
 pub fn layout_root(
     m: &Model,
     tree: &Tree,
     root: NodeId,
-    area: Rect,
+    display: &Display,
     also_present: Option<WindowId>,
 ) -> layout::LayoutOutput {
+    let gaps = m.gaps(display);
     let present =
         |l: &Leaf| (also_present.is_some() && l.window() == also_present) || m.leaf_present(l);
     let min = |l: &Leaf| m.leaf_min_size(l);
     layout::compute(
         tree,
         root,
-        area,
+        display.visible_frame,
         &LayoutInput {
-            inner_gap: m.config.settings.inner_gap,
+            inner_gap: gaps.inner,
+            outer_gap: gaps.outer,
+            smart_gaps: m.config.settings.smart_gaps,
             present: &present,
             min_size: &min,
         },
@@ -51,7 +54,7 @@ pub fn refresh_desired(m: &mut Model) -> Vec<Effect> {
             let Some(ws) = m.visible.get(&d.id).and_then(|w| m.ws(w)) else {
                 continue;
             };
-            let out = layout_root(m, &m.tree, ws.root, m.tiling_area(d), None);
+            let out = layout_root(m, &m.tree, ws.root, d, None);
             for (node, rect) in out.frames {
                 match m.tree.leaf(node) {
                     Some(Leaf::Window(w)) => {
