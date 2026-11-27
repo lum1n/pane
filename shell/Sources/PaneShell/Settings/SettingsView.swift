@@ -26,6 +26,7 @@ struct PaneSettings: Codable, Equatable {
     var dim_unfocused: Double
     var mouse_follows_focus: Bool
     var focus_follows_mouse: Bool
+    var title_drag: Bool?
     var menu_bar_app_icons: Bool?
 }
 
@@ -493,6 +494,14 @@ private struct HotkeySettingsView: View {
                         set: { model.set("gestures", $0) }
                     ))
                     Text("Hold the modifier over a window and point at another tile, its edge, a screen edge or another display; the outline shows where it goes. Release to drop, Esc cancels.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Toggle("Move tiled windows by dragging their title bar", isOn: Binding(
+                        get: { model.settings?.title_drag ?? true },
+                        set: { model.set("title_drag", $0) }
+                    ))
+                    Text("The same outline shows while you drag; let go to drop the window there. Let go over its own tile and it goes back.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

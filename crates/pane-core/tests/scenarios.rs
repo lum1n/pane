@@ -1433,7 +1433,7 @@ fn hiding_never_marks_windows_stubborn() {
 // ---------------------------------------------------------------- gestures
 
 use pane_core::geometry::Point;
-use pane_core::gesture::GesturePhase;
+use pane_core::gesture::{DragPhase, GesturePhase};
 
 fn pt(x: f64, y: f64) -> Point {
     Point { x, y }
@@ -1663,6 +1663,188 @@ fn gesture_drop_unzooms_and_closing_the_window_cancels() {
     assert!(fx
         .iter()
         .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
+}
+
+// ------------------------------------------------- plain title-bar drag
+
+impl Sim {
+    fn drag_fx(&mut self, phase: DragPhase) -> Vec<Effect> {
+        self.ev(Event::Command {
+            cmd: Command::Drag { phase },
+            token: None,
+        })
+    }
+
+    /// Grab `wid` by its title bar and drag the pointer to `to` in five
+    /// steps; the window follows the pointer at its size, as macOS moves
+    /// it. Returns the last overlay shown. Does not let go.
+    fn title_drag_to(&mut self, wid: u32, to: Point) -> Option<(Rect, String)> {
+        self.now += 500; // Well past Pane's own last move of the window.
+        let from = self.frame(wid);
+        let grab = pt(from.x + from.w / 2.0, from.y + 10.0);
+        let mut shown = None;
+        for i in 1..=5 {
+            let t = i as f64 / 5.0;
+            let p = pt(grab.x + (to.x - grab.x) * t, grab.y + (to.y - grab.y) * t);
+            let mut fx = self.drag_fx(DragPhase::Move { at: p });
+            let r = Rect::new(p.x - from.w / 2.0, p.y - 10.0, from.w, from.h);
+            self.frames.insert(WindowId(wid), r);
+            self.now += 30;
+            fx.extend(self.ev(Event::WindowFrameChanged {
+                pid: 100,
+                wid: WindowId(wid),
+                frame: r,
+            }));
+            if fx
+                .iter()
+                .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide)))
+            {
+                shown = None;
+            }
+            shown = overlay(&fx).or(shown);
+        }
+        shown
+    }
+
+    /// Drag `wid` by its title bar to `to` and let go there. Checks the
+    /// overlay went away and that the window took the previewed frame.
+    fn title_drag(&mut self, wid: u32, to: Point) -> Option<(Rect, String)> {
+        let shown = self.title_drag_to(wid, to);
+        let fx = self.drag_fx(DragPhase::Release { at: to });
+        assert!(self.m.gesture.is_none());
+        assert!(self.m.pointer.is_none());
+        if self.m.windows.contains_key(&WindowId(wid)) {
+            assert!(fx
+                .iter()
+                .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
+        }
+        if let Some((frame, _)) = &shown {
+            assert_eq!(self.frame(wid), *frame, "preview equals the final frame");
+        }
+        shown
+    }
+}
+
+#[test]
+fn title_drag_swaps_tiles() {
+    let mut s = two_tiles();
+    let (a, b) = (s.frame(1), s.frame(2));
+    let shown = s.title_drag(1, b.center());
+    assert_eq!(shown.unwrap().1, "Swap with Term");
+    assert_eq!((s.frame(1), s.frame(2)), (b, a));
+    assert_eq!(s.m.windows[&WindowId(1)].mode, WindowMode::Tiled);
+}
+
+#[test]
+fn title_drag_splits_and_moves_to_another_display() {
+    let mut s = two_tiles();
+    s.window(100, 3, "three", CENTER);
+    let b = s.frame(2);
+    let shown = s
+        .title_drag(3, pt(b.x + b.w * 0.5, b.y + b.h * 0.9))
+        .unwrap();
+    assert_eq!(shown.1, "Below Term");
+    assert!(s.frame(3).y > s.frame(2).y && s.frame(3).x == s.frame(2).x);
+    let shown = s.title_drag(3, pt(2900.0, 500.0)).unwrap();
+    assert_eq!(shown.1, "Fill Display R");
+    assert_eq!(s.m.windows[&WindowId(3)].workspace, "R/1");
+    assert_eq!(s.frame(3), Rect::new(1926.0, 36.0, 1908.0, 1038.0));
+}
+
+#[test]
+fn title_drag_released_over_own_tile_snaps_back() {
+    let mut s = two_tiles();
+    let before = (s.frame(1), s.frame(2));
+    // Out over tile 2 and back onto its own tile.
+    s.title_drag_to(1, before.1.center());
+    let shown = s.title_drag(1, pt(before.0.x + 200.0, before.0.y + 300.0));
+    assert!(shown.is_none());
+    assert_eq!((s.frame(1), s.frame(2)), before);
+}
+
+#[test]
+fn title_drag_pause_does_not_snap_back() {
+    let mut s = two_tiles();
+    let b = s.frame(2);
+    let sets = s.sets_for[&WindowId(1)];
+    s.title_drag_to(1, b.center());
+    s.tick(400);
+    s.tick(400);
+    assert_eq!(s.sets_for[&WindowId(1)], sets, "no snap-back while held");
+    assert!(s.m.gesture.is_some());
+    s.drag_fx(DragPhase::Release { at: b.center() });
+    assert_eq!(s.frame(1), b);
+}
+
+#[test]
+fn title_drag_is_undoable() {
+    let mut s = two_tiles();
+    let (a, b) = (s.frame(1), s.frame(2));
+    s.title_drag(1, b.center()).unwrap();
+    assert_eq!(s.frame(1), b);
+    s.cmd(Command::Undo);
+    assert_eq!((s.frame(1), s.frame(2)), (a, b));
+}
+
+#[test]
+fn title_drag_lost_mouse_up_snaps_back() {
+    let mut s = two_tiles();
+    let a = s.frame(1);
+    s.title_drag_to(1, s.frame(2).center());
+    assert!(s.m.gesture.is_some());
+    let fx = {
+        s.now += 6_000;
+        s.ev(Event::Tick)
+    };
+    assert!(fx
+        .iter()
+        .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
+    assert!(s.m.gesture.is_none());
+    assert_eq!(s.frame(1), a);
+}
+
+#[test]
+fn title_drag_off_or_without_pointer_snaps_back() {
+    // Setting off.
+    let mut s = two_tiles();
+    s.m.config.settings.title_drag = false;
+    let (a, b) = (s.frame(1), s.frame(2));
+    assert!(s.title_drag_to(1, b.center()).is_none());
+    assert!(s.m.gesture.is_none());
+    s.tick(400);
+    assert_eq!((s.frame(1), s.frame(2)), (a, b));
+    // No pointer news (no event tap): the old snap-back.
+    let mut s = two_tiles();
+    s.now += 500;
+    let r = Rect::new(a.x + 300.0, a.y + 50.0, a.w, a.h);
+    s.frames.insert(WindowId(1), r);
+    s.ev(Event::WindowFrameChanged {
+        pid: 100,
+        wid: WindowId(1),
+        frame: r,
+    });
+    assert!(s.m.gesture.is_none());
+    s.tick(400);
+    assert_eq!(s.frame(1), a);
+}
+
+#[test]
+fn title_drag_window_closed_mid_drag_cancels() {
+    let mut s = two_tiles();
+    s.title_drag_to(1, s.frame(2).center());
+    let fx = s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(1),
+    });
+    assert!(s.m.gesture.is_none());
+    assert!(fx
+        .iter()
+        .any(|f| matches!(f, Effect::UiRequest(UiRequest::GestureOverlayHide))));
+    // The release that follows does nothing.
+    s.drag_fx(DragPhase::Release {
+        at: pt(500.0, 500.0),
+    });
+    assert_eq!(s.frame(2).w, 1908.0);
 }
 
 fn search(s: &mut Sim, q: &str) -> Vec<pane_core::palette::PaletteItem> {
@@ -2105,6 +2287,7 @@ fn focus_follows_mouse_after_the_pointer_rests() {
     s.m.gesture = Some(pane_core::model::Gesture {
         wid: WindowId(1),
         target: None,
+        plain: false,
     });
     s.tick(500);
     assert_eq!(s.m.focus_window, Some(WindowId(1)));

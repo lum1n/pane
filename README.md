@@ -55,7 +55,9 @@ To move a window with the mouse, hold the modifier (Option by default) over it a
 
 Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Hotkeys or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
 
-`mod-z` undoes the last layout change: a move, resize, swap, edge drag, move to another workspace, split direction, tiles/accordion, float/tile, or an applied profile. Press it again to go further back, up to 20 changes. Windows opened since stay where they are, and windows closed since are left out.
+Dragging a tiled window by its title bar works the same way, with no modifier: the outline shows where it will land, and letting go drops it there (the same targets as above). Let go over its own tile and it goes back. Pausing mid-drag is fine; the window stays where you hold it. This needs the pointer event tap (Input Monitoring); without it, or with `title_drag = false` (Settings > Hotkeys), a dragged tile snaps back.
+
+`mod-z` undoes the last layout change: a move, resize, swap, title-bar or edge drag, move to another workspace, split direction, tiles/accordion, float/tile, or an applied profile. Press it again to go further back, up to 20 changes. Windows opened since stay where they are, and windows closed since are left out.
 
 `mod-/` (or **Go to Window…** in the menu) opens the palette. Type part of an app name or window title to find a window on any display or workspace, including hidden and minimized ones; Enter shows its workspace and focuses it. With nothing typed, the window you were in before comes first, so `mod-/` then Enter goes back. Workspaces and profiles are listed too; start with `>` to search only commands (each with its shortcut). `pane search TEXT` returns the same list as JSON.
 

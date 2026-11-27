@@ -13,7 +13,7 @@ use crossbeam_channel::Sender;
 use pane_core::config::{keycode, Chord, Mods};
 use pane_core::geometry::Point;
 use pane_core::gesture::{
-    mod_bits, GesturePhase, GestureTracker, KeyVerdict, ALT, CMD, CTRL, SHIFT,
+    mod_bits, DragPhase, GesturePhase, GestureTracker, KeyVerdict, ALT, CMD, CTRL, SHIFT,
 };
 use pane_core::proto::Command;
 
@@ -23,6 +23,8 @@ use crate::ffi::*;
 const KEY_ESCAPE: u16 = 53;
 /// Pointer travel (points) between two `Command::Hover`s.
 const HOVER_STEP: f64 = 4.0;
+/// Pointer travel (points) between two `DragPhase::Move`s.
+const DRAG_STEP: f64 = 4.0;
 
 type Table = HashMap<(u16, u8), Command>;
 
@@ -34,6 +36,10 @@ struct TapState {
     hover: Arc<AtomicBool>,
     /// Where the last `Hover` was sent (tap thread only).
     last_hover: Cell<Option<Point>>,
+    /// Title-bar drags are on: report left-button drags and releases.
+    drag: Arc<AtomicBool>,
+    /// Where the last `DragPhase::Move` was sent (tap thread only).
+    last_drag: Cell<Option<Point>>,
     tx: Sender<Command>,
 }
 
@@ -53,6 +59,28 @@ impl TapState {
             self.last_hover.set(Some(at));
             let _ = self.tx.send(Command::Hover { at });
         }
+    }
+
+    /// The pointer moved with the left button held (or, `up`, let go).
+    fn drag(&self, at: Point, up: bool) {
+        if !self.drag.load(Ordering::Relaxed) {
+            return;
+        }
+        let phase = if up {
+            self.last_drag.set(None);
+            DragPhase::Release { at }
+        } else {
+            let far = self
+                .last_drag
+                .get()
+                .is_none_or(|p| (p.x - at.x).hypot(p.y - at.y) >= DRAG_STEP);
+            if !far {
+                return;
+            }
+            self.last_drag.set(Some(at));
+            DragPhase::Move { at }
+        };
+        let _ = self.tx.send(Command::Drag { phase });
     }
 
     fn send_phase(&self, phase: Option<GesturePhase>) {
@@ -168,6 +196,14 @@ unsafe extern "C" fn mouse_cb(
             let (m, p) = (event_mods(event), event_point(event));
             st.with_tracker(|t| t.on_flags(m, p)).flatten()
         }
+        kCGEventLeftMouseDragged => {
+            st.drag(event_point(event), false);
+            None
+        }
+        kCGEventLeftMouseUp => {
+            st.drag(event_point(event), true);
+            None
+        }
         kCGEventLeftMouseDown | kCGEventRightMouseDown | kCGEventOtherMouseDown => {
             st.with_tracker(|t| t.on_mouse_down()).flatten()
         }
@@ -184,6 +220,7 @@ pub struct Hotkeys {
     suspended: Arc<AtomicBool>,
     gesture: Arc<Mutex<GestureTracker>>,
     hover: Arc<AtomicBool>,
+    drag: Arc<AtomicBool>,
     tx: Sender<Command>,
 }
 
@@ -202,6 +239,7 @@ impl Hotkeys {
             gesture.as_ref().map(mod_bits),
         )));
         let hover = Arc::new(AtomicBool::new(false));
+        let drag = Arc::new(AtomicBool::new(false));
         let (ok_tx, ok_rx) = crossbeam_channel::bounded(1);
         let state = Box::new(TapState {
             table: table.clone(),
@@ -209,6 +247,8 @@ impl Hotkeys {
             gesture: tracker.clone(),
             hover: hover.clone(),
             last_hover: Cell::new(None),
+            drag: drag.clone(),
+            last_drag: Cell::new(None),
             tx: tx.clone(),
         });
         std::thread::Builder::new()
@@ -237,6 +277,8 @@ impl Hotkeys {
                 let mouse_mask = (1u64 << kCGEventMouseMoved)
                     | (1u64 << kCGEventFlagsChanged)
                     | (1u64 << kCGEventLeftMouseDown)
+                    | (1u64 << kCGEventLeftMouseDragged)
+                    | (1u64 << kCGEventLeftMouseUp)
                     | (1u64 << kCGEventRightMouseDown)
                     | (1u64 << kCGEventOtherMouseDown);
                 let mport = CGEventTapCreate(
@@ -265,6 +307,7 @@ impl Hotkeys {
                 suspended,
                 gesture: tracker,
                 hover,
+                drag,
                 tx,
             }),
             _ => Err("could not create the keyboard event tap (grant Accessibility, and Input Monitoring if asked)".into()),
@@ -278,6 +321,11 @@ impl Hotkeys {
     /// Focus follows mouse: send `Command::Hover` as the pointer moves.
     pub fn set_hover(&self, on: bool) {
         self.hover.store(on, Ordering::Relaxed);
+    }
+
+    /// Title-bar drags: send `Command::Drag` while the left button is held.
+    pub fn set_drag(&self, on: bool) {
+        self.drag.store(on, Ordering::Relaxed);
     }
 
     pub fn update(&self, bindings: &[(Chord, Command)], gesture: Option<Mods>) {
