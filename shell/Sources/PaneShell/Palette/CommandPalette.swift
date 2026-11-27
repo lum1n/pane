@@ -17,9 +17,14 @@ struct PaletteItem {
               let title = d["title"] as? String,
               let command = d["command"] as? [String: Any] else { return nil }
         self.kind = kind
-        self.title = title
         subtitle = d["subtitle"] as? String ?? ""
         bundleId = d["bundle_id"] as? String
+        // Unnamed scratchpads are called by their bundle id; show the app.
+        if let b = bundleId, title.contains(b) {
+            self.title = title.replacingOccurrences(of: b, with: AppIcons.name(for: b))
+        } else {
+            self.title = title
+        }
         shortcut = d["shortcut"] as? String
         current = d["current"] as? Bool ?? false
         self.command = command
@@ -42,6 +47,9 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
     private let scroll = NSScrollView()
     private var items: [PaletteItem] = []
     private var icons: [String: NSImage] = [:]
+    /// No results for a non-empty query: one "No matches" row.
+    private var showsNoMatches: Bool { items.isEmpty && !field.stringValue.isEmpty }
+    private var rowCount: Int { showsNoMatches ? 1 : items.count }
 
     private static let width: CGFloat = 640
     private static let rowHeight: CGFloat = 44
@@ -59,7 +67,7 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
         panel = p
         field.stringValue = ""
         refresh()
-        p.setFrame(frame(rows: items.count), display: true)
+        p.setFrame(frame(rows: rowCount), display: true)
         p.makeKeyAndOrderFront(nil)
         p.makeFirstResponder(field)
     }
@@ -85,7 +93,7 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
         if let p = panel, p.isVisible {
             // Keep the top edge still while the list grows and shrinks.
             let old = p.frame
-            let new = frame(rows: items.count)
+            let new = frame(rows: rowCount)
             p.setFrame(NSRect(x: old.minX, y: old.maxY - new.height, width: new.width, height: new.height), display: true)
         }
     }
@@ -94,7 +102,7 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
         guard items.indices.contains(row) else { return }
         let cmd = items[row].command
         hide()
-        if case let .error(m) = PaneCore.shared.send(cmd) { NoticeHUD.shared.show(m) }
+        if case let .error(m) = PaneCore.shared.send(cmd) { NoticeHUD.shared.show(m, symbol: NoticeHUD.errorSymbol) }
     }
 
     private func moveSelection(_ delta: Int) {
@@ -132,13 +140,25 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
 
     // MARK: Table
 
-    func numberOfRows(in tableView: NSTableView) -> Int { items.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { rowCount }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = (tableView.makeView(withIdentifier: PaletteRow.id, owner: nil) as? PaletteRow) ?? PaletteRow()
-        let item = items[row]
-        cell.configure(item, icon: icon(for: item))
+        if showsNoMatches {
+            cell.configureNoMatches()
+        } else {
+            let item = items[row]
+            cell.configure(item, icon: icon(for: item))
+        }
         return cell
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PaletteRowView()
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        !showsNoMatches
     }
 
     @objc private func clicked() {
@@ -156,10 +176,10 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
         }
         let symbol = switch item.kind {
         case "workspace": "rectangle.split.3x1"
-        case "profile": "square.grid.2x2"
+        case "profile": "person.crop.rectangle.stack"
         default: "command"
         }
-        return NSImage(systemSymbolName: symbol, accessibilityDescription: item.kind)
+        return PaletteRow.symbol(symbol, accessibilityDescription: item.kind)
     }
 
     // MARK: Layout
@@ -167,7 +187,7 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
     /// Centred on the focused display, a fifth of the way down.
     private func frame(rows: Int) -> NSRect {
         let shown = CGFloat(max(1, min(rows, Self.maxRows)))
-        let h = Self.fieldHeight + (rows == 0 ? 0 : shown * Self.rowHeight + 8)
+        let h = Self.fieldHeight + (rows == 0 ? 0 : shown * Self.rowHeight + 10)
         let s = PaneCore.shared.snapshot
         let display = s?.displays.first(where: { $0.focused }) ?? s?.displays.first(where: { $0.is_main })
         let screen = display.map { GestureOverlay.cocoa($0.visible_frame.cg) }
@@ -189,19 +209,22 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
         p.isReleasedWhenClosed = false
         p.delegate = self
 
-        let effect = NSVisualEffectView()
-        effect.material = .hudWindow
-        effect.state = .active
-        effect.blendingMode = .behindWindow
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 12
-        effect.layer?.masksToBounds = true
-        effect.autoresizingMask = [.width, .height]
+        // Spotlight-style Liquid Glass; `container` holds the field, rule and list.
+        let glass = NSGlassEffectView()
+        glass.cornerRadius = 24
+        glass.autoresizingMask = [.width, .height]
+        let container = NSView()
+
+        let magnifier = NSImageView()
+        magnifier.image = PaletteRow.symbol("magnifyingglass", accessibilityDescription: nil, pointSize: 18)
+        magnifier.contentTintColor = .secondaryLabelColor
+        magnifier.translatesAutoresizingMaskIntoConstraints = false
+        magnifier.setContentHuggingPriority(.required, for: .horizontal)
 
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = .systemFont(ofSize: 22, weight: .light)
+        field.font = .systemFont(ofSize: 22)
         field.placeholderString = "Go to window, workspace or profile   (> for commands)"
         field.delegate = self
         field.cell?.usesSingleLineMode = true
@@ -235,23 +258,27 @@ final class CommandPalette: NSObject, NSTextFieldDelegate, NSTableViewDataSource
         rule.boxType = .separator
         rule.translatesAutoresizingMaskIntoConstraints = false
 
-        effect.addSubview(field)
-        effect.addSubview(rule)
-        effect.addSubview(scroll)
+        container.addSubview(magnifier)
+        container.addSubview(field)
+        container.addSubview(rule)
+        container.addSubview(scroll)
         NSLayoutConstraint.activate([
-            field.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 18),
-            field.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -18),
-            field.topAnchor.constraint(equalTo: effect.topAnchor, constant: 12),
+            magnifier.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            magnifier.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            field.leadingAnchor.constraint(equalTo: magnifier.trailingAnchor, constant: 10),
+            field.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            field.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
             field.heightAnchor.constraint(equalToConstant: 28),
-            rule.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            rule.topAnchor.constraint(equalTo: effect.topAnchor, constant: Self.fieldHeight - 1),
-            scroll.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 6),
-            scroll.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -6),
+            rule.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            rule.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            rule.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.fieldHeight - 1),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             scroll.topAnchor.constraint(equalTo: rule.bottomAnchor, constant: 4),
-            scroll.bottomAnchor.constraint(equalTo: effect.bottomAnchor, constant: -4),
+            scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
         ])
-        p.contentView = effect
+        glass.contentView = container
+        p.contentView = glass
         return p
     }
 }
@@ -262,12 +289,39 @@ final class KeyPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// Selection as an inset rounded rect, like Spotlight.
+private final class PaletteRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        let color = isEmphasized
+            ? NSColor.selectedContentBackgroundColor
+            : NSColor.controlAccentColor.withAlphaComponent(0.25)
+        color.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 2), xRadius: 10, yRadius: 10).fill()
+    }
+
+    override var interiorBackgroundStyle: NSView.BackgroundStyle {
+        isSelected && isEmphasized ? .emphasized : .normal
+    }
+}
+
 private final class PaletteRow: NSTableCellView {
     static let id = NSUserInterfaceItemIdentifier("PaletteRow")
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private let subtitle = NSTextField(labelWithString: "")
-    private let shortcut = NSTextField(labelWithString: "")
+    private let currentTag = NSImageView()
+    private let shortcut = NSImageView()
+    /// Stands in for "no image", so the image views keep an intrinsic size.
+    private static let blank = NSImage(size: NSSize(width: 1, height: 1))
+
+    /// An SF Symbol in the palette's hierarchical style.
+    static func symbol(_ name: String, accessibilityDescription: String?, pointSize: CGFloat = 20) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(hierarchicalColor: .secondaryLabelColor))
+        return NSImage(systemSymbolName: name, accessibilityDescription: accessibilityDescription)?
+            .withSymbolConfiguration(config)
+    }
 
     init() {
         super.init(frame: .zero)
@@ -277,28 +331,31 @@ private final class PaletteRow: NSTableCellView {
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
-        shortcut.font = .systemFont(ofSize: 12)
-        shortcut.textColor = .secondaryLabelColor
-        shortcut.alignment = .right
-        shortcut.setContentCompressionResistancePriority(.required, for: .horizontal)
-        shortcut.setContentHuggingPriority(.required, for: .horizontal)
+        for v in [shortcut, currentTag] {
+            v.imageScaling = .scaleNone
+            v.setContentCompressionResistancePriority(.required, for: .horizontal)
+            v.setContentHuggingPriority(.required, for: .horizontal)
+        }
         icon.imageScaling = .scaleProportionallyUpOrDown
-        for v in [icon, title, subtitle, shortcut] as [NSView] {
+        for v in [icon, title, subtitle, currentTag, shortcut] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 26),
             icon.heightAnchor.constraint(equalToConstant: 26),
             title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             title.topAnchor.constraint(equalTo: topAnchor, constant: 5),
             title.trailingAnchor.constraint(lessThanOrEqualTo: shortcut.leadingAnchor, constant: -10),
+            currentTag.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 6),
+            currentTag.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            currentTag.trailingAnchor.constraint(lessThanOrEqualTo: shortcut.leadingAnchor, constant: -10),
             subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
             subtitle.trailingAnchor.constraint(lessThanOrEqualTo: shortcut.leadingAnchor, constant: -10),
-            shortcut.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            shortcut.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             shortcut.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -307,10 +364,27 @@ private final class PaletteRow: NSTableCellView {
 
     func configure(_ item: PaletteItem, icon image: NSImage?) {
         icon.image = image
-        icon.contentTintColor = item.bundleId == nil ? .secondaryLabelColor : nil
+        icon.contentTintColor = nil
         title.stringValue = item.title
-        title.font = .systemFont(ofSize: 14, weight: item.current ? .semibold : .regular)
+        title.textColor = .labelColor
+        title.font = .systemFont(ofSize: 14, weight: item.current ? .medium : .regular)
         subtitle.stringValue = item.subtitle
-        shortcut.stringValue = item.shortcut.map(Shortcut.pretty) ?? ""
+        currentTag.image = item.current ? KeycapDrawing.tag("Current") : Self.blank
+        currentTag.isHidden = !item.current
+        shortcut.image = item.shortcut.flatMap(KeycapDrawing.image(for:)) ?? Self.blank
+        setAccessibilityLabel([item.title, item.subtitle, item.current ? "current" : nil,
+                               item.shortcut.map(Shortcut.pretty)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
+    }
+
+    func configureNoMatches() {
+        icon.image = Self.symbol("magnifyingglass", accessibilityDescription: nil)
+        title.stringValue = "No matches"
+        title.textColor = .secondaryLabelColor
+        title.font = .systemFont(ofSize: 14)
+        subtitle.stringValue = "Type > to search commands only"
+        currentTag.image = Self.blank
+        currentTag.isHidden = true
+        shortcut.image = Self.blank
+        setAccessibilityLabel("No matches")
     }
 }

@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Details of the selected tile.
+/// Details of the selected tile and its workspace.
 @MainActor
 struct InspectorView: View {
-    @ObservedObject var model: EditorModel
+    let model: EditorModel
     @State private var title = ""
     @State private var args = ""
+    @State private var workspace = ""
 
     private var slot: AppSlot? {
         guard let sel = model.selection,
@@ -15,43 +16,80 @@ struct InspectorView: View {
     }
 
     var body: some View {
-        Form {
+        Group {
             if let sel = model.selection, let s = slot {
-                Section("App") {
-                    LabeledContent("Name", value: AppIcons.name(for: s.bundle_id))
-                    LabeledContent("Bundle ID") { Text(s.bundle_id).textSelection(.enabled).font(.caption) }
-                }
-                Section("Matching") {
-                    TextField("Title regex (optional)", text: $title)
-                        .onSubmit { commit(sel, s) }
-                    TextField("Launch arguments", text: $args)
-                        .onSubmit { commit(sel, s) }
-                    Button("Update") { commit(sel, s) }
-                }
-                Section("Layout") {
-                    if let parent = sel.parent {
-                        LabeledContent("Split", value: model.orientation(at: parent))
-                        Button("Toggle Split Direction") { model.toggleOrientation(sel) }
-                        Button("Toggle Accordion") { model.toggleLayout(parent) }
-                    }
-                    Button("Remove Tile", role: .destructive) { model.remove(sel) }
-                }
+                form(sel, s)
             } else {
-                Text("Select a tile to edit it.").foregroundStyle(.secondary)
-                Text("Right-click a tile for more. Drag tiles to swap (middle) or move (edges). Drag the gaps between tiles to resize.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                ContentUnavailableView {
+                    Label("No Tile Selected", systemImage: "square.dashed")
+                } description: {
+                    Text("Click a tile to edit it. Drag tiles to swap (middle) or move (edges), and drag the gaps between tiles to resize.")
+                }
             }
         }
-        .formStyle(.grouped)
         .onChange(of: model.selection) { _, _ in load() }
         .onChange(of: model.profile) { _, _ in load() }
         .onAppear { load() }
     }
 
+    private func form(_ sel: TileRef, _ s: AppSlot) -> some View {
+        Form {
+            Section {
+                HStack(spacing: 12) {
+                    AppIconView(bundleId: s.bundle_id, size: 48)
+                    Text(AppIcons.name(for: s.bundle_id)).font(.headline).lineLimit(2)
+                }
+                .padding(.vertical, 4)
+            }
+            Section {
+                TextField("Title", text: $title, prompt: Text("Regex, optional"))
+                    .onSubmit { commit(sel, s) }
+                TextField("Arguments", text: $args, prompt: Text("Launch arguments"))
+                    .onSubmit { commit(sel, s) }
+                Button("Update Matching") { commit(sel, s) }
+                    .disabled(title == (s.title ?? "") && args == (s.launch_args ?? []).joined(separator: " "))
+            } header: {
+                Text("Matching")
+            } footer: {
+                Text("The title regex picks one of the app's windows; the arguments are used when Pane launches the app.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Workspace") {
+                TextField("Name", text: $workspace)
+                    .onSubmit { model.setWorkspace(display: sel.display, workspace) }
+                Toggle("Show after applying", isOn: Binding(
+                    get: { model.profile.display[safe: sel.display]?.isVisible == true },
+                    set: { if $0 { model.setVisible(sel.display) } }
+                ))
+            }
+            if let parent = sel.parent {
+                Section("Layout") {
+                    Picker("Split", selection: Binding(
+                        get: { model.orientation(at: parent) },
+                        set: { model.setOrientation(parent, $0) }
+                    )) {
+                        Label("Side by Side", systemImage: "rectangle.split.2x1").tag("horizontal")
+                        Label("Stacked", systemImage: "rectangle.split.1x2").tag("vertical")
+                    }
+                    .pickerStyle(.segmented)
+                    Toggle("Accordion", isOn: Binding(
+                        get: { model.layout(at: parent) == "accordion" },
+                        set: { _ in model.toggleLayout(parent) }
+                    ))
+                }
+            }
+            Section {
+                Button("Remove Tile", role: .destructive) { model.remove(sel) }
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
     private func load() {
         title = slot?.title ?? ""
         args = (slot?.launch_args ?? []).joined(separator: " ")
+        workspace = model.selection.flatMap { model.profile.display[safe: $0.display]?.workspace } ?? ""
     }
 
     private func commit(_ sel: TileRef, _ s: AppSlot) {

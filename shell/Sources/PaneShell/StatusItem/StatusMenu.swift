@@ -19,10 +19,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         rebuild()
     }
 
-    private func item(_ title: String, _ action: Selector?, key: String = "", obj: Any? = nil) -> NSMenuItem {
+    private func item(_ title: String, _ action: Selector?, key: String = "", obj: Any? = nil, symbol: String? = nil) -> NSMenuItem {
         let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
         i.target = self
         i.representedObject = obj
+        if let symbol { i.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
         return i
     }
 
@@ -30,39 +31,38 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let snap = PaneCore.shared.snapshot
         if let r = UpdateChecker.shared.available {
-            menu.addItem(item("Pane \(r.version) Is Available…", #selector(showUpdate)))
+            menu.addItem(item("Pane \(r.version) Is Available…", #selector(showUpdate), symbol: "arrow.down.circle"))
             menu.addItem(.separator())
         }
         if let s = snap {
             if !s.ax_trusted {
-                menu.addItem(item("Grant Accessibility Access…", #selector(grantAccess)))
+                menu.addItem(item("Grant Accessibility Access…", #selector(grantAccess), symbol: "exclamationmark.triangle"))
                 menu.addItem(.separator())
             }
             if let err = s.config_error {
-                let e = item("Config error: \(err)", nil)
+                let e = item("Config error: \(err)", nil, symbol: "exclamationmark.triangle")
                 e.isEnabled = false
                 menu.addItem(e)
                 menu.addItem(.separator())
             }
             for d in s.displays.sorted(by: { $0.rank < $1.rank }) {
-                let header = item(d.name + (d.focused ? "  ●" : ""), nil)
-                header.isEnabled = false
-                menu.addItem(header)
+                menu.addItem(.sectionHeader(title: d.focused && s.displays.count > 1 ? "\(d.name) · Focused" : d.name))
                 for w in s.workspaces where w.display == d.id {
                     let name = w.title.map { "\(w.label) · \($0)" } ?? w.label
-                    let title = w.windows > 0 ? "  \(name)  (\(w.windows))" : "  \(name)"
-                    let i = item(title, #selector(showWorkspace(_:)), obj: w.target)
+                    let i = item(name, #selector(showWorkspace(_:)), obj: w.target)
                     i.state = w.visible ? .on : .off
+                    if w.windows > 0 { i.badge = NSMenuItemBadge(count: w.windows) }
                     menu.addItem(i)
                 }
             }
             menu.addItem(.separator())
-            let pads = NSMenuItem(title: "Scratchpads", action: nil, keyEquivalent: "")
+            let pads = item("Scratchpads", nil, symbol: "rectangle.on.rectangle")
             let padMenu = NSMenu()
             for sp in s.scratchpads ?? [] {
-                let i = item(sp.name, #selector(toggleScratchpad(_:)), obj: sp.name)
+                let i = item(sp.displayName, #selector(toggleScratchpad(_:)), obj: sp.name)
+                i.image = AppIcons.small(for: sp.app)
                 i.state = sp.shown ? .on : .off
-                if let k = sp.key { i.toolTip = "Key: \(k)" }
+                if let k = sp.key { i.toolTip = "Key: \(Shortcut.pretty(k))" }
                 padMenu.addItem(i)
             }
             if padMenu.items.isEmpty {
@@ -72,7 +72,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             }
             pads.submenu = padMenu
             menu.addItem(pads)
-            let summon = NSMenuItem(title: "Summon", action: nil, keyEquivalent: "")
+            let summon = item("Summon", nil, symbol: "arrow.down.right.and.arrow.up.left")
             let summonMenu = NSMenu()
             let apps = NSWorkspace.shared.runningApplications
                 .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
@@ -80,10 +80,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             for a in apps {
                 let i = item(a.name, #selector(summonApp(_:)), obj: a.id)
-                if let icon = AppIcons.icon(for: a.id).copy() as? NSImage {
-                    icon.size = NSSize(width: 16, height: 16)
-                    i.image = icon
-                }
+                i.image = AppIcons.small(for: a.id)
                 summonMenu.addItem(i)
             }
             summon.submenu = summonMenu
@@ -91,7 +88,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             menu.addItem(summon)
             let drifted = s.profile_drift == true
             let profileTitle = s.active_profile.map { "Profile: \($0)" + (drifted ? "  •" : "") } ?? "Profiles"
-            let profiles = NSMenuItem(title: profileTitle, action: nil, keyEquivalent: "")
+            let profiles = item(profileTitle, nil, symbol: "person.crop.rectangle.stack")
             let sub = NSMenu()
             let desk = s.desk_profiles ?? []
             for p in s.profiles {
@@ -121,15 +118,16 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             i.isEnabled = false
             menu.addItem(i)
         }
-        menu.addItem(item("Go to Window…", #selector(openPalette)))
-        menu.addItem(item("Restore All Windows", #selector(recover)))
-        menu.addItem(item("Reload Config", #selector(reload)))
+        menu.addItem(item("Go to Window…", #selector(openPalette), symbol: "magnifyingglass"))
+        menu.addItem(item("Restore All Windows", #selector(recover), symbol: "arrow.uturn.backward.circle"))
+        menu.addItem(item("Reload Config", #selector(reload), symbol: "arrow.clockwise"))
         menu.addItem(.separator())
-        menu.addItem(item("Profile Editor…", #selector(editProfiles), key: "e"))
-        menu.addItem(item("Settings…", #selector(settings), key: ","))
-        menu.addItem(item("Check for Updates…", #selector(checkForUpdates)))
+        menu.addItem(item("Profile Editor…", #selector(editProfiles), key: "e", symbol: "square.grid.2x2"))
+        menu.addItem(item("About Pane", #selector(about), symbol: "info.circle"))
+        menu.addItem(item("Settings…", #selector(settings), key: ",", symbol: "gearshape"))
+        menu.addItem(item("Check for Updates…", #selector(checkForUpdates), symbol: "arrow.down.circle"))
         menu.addItem(.separator())
-        menu.addItem(item("Quit Pane", #selector(quit), key: "q"))
+        menu.addItem(item("Quit Pane", #selector(quit), key: "q", symbol: "power"))
     }
 
     @objc private func openPalette() {
@@ -157,25 +155,25 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func summonApp(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        if case let .error(m) = PaneCore.shared.send(["cmd": "summon", "app": id]) { NoticeHUD.shared.show(m) }
+        if case let .error(m) = PaneCore.shared.send(["cmd": "summon", "app": id]) { NoticeHUD.shared.show(m, symbol: NoticeHUD.errorSymbol) }
     }
 
     @objc private func toggleScratchpad(_ sender: NSMenuItem) {
         guard let n = sender.representedObject as? String else { return }
-        if case let .error(m) = PaneCore.shared.send(["cmd": "scratchpad", "name": n]) { NoticeHUD.shared.show(m) }
+        if case let .error(m) = PaneCore.shared.send(["cmd": "scratchpad", "name": n]) { NoticeHUD.shared.show(m, symbol: NoticeHUD.errorSymbol) }
     }
 
     @objc private func applyProfile(_ sender: NSMenuItem) {
         guard let n = sender.representedObject as? String else { return }
-        if case let .error(m) = PaneCore.shared.applyProfile(named: n) { NoticeHUD.shared.show(m) }
+        if case let .error(m) = PaneCore.shared.applyProfile(named: n) { NoticeHUD.shared.show(m, symbol: NoticeHUD.errorSymbol) }
     }
 
     @objc private func toggleProfileAuto(_ sender: NSMenuItem) {
         guard let n = sender.representedObject as? String else { return }
         let on = sender.state != .on
         switch PaneCore.shared.setProfileAuto(n, here: on) {
-        case let .error(m): NoticeHUD.shared.show(m)
-        case .ok: NoticeHUD.shared.show(on ? "“\(n)” applies on these displays" : "“\(n)” applies only by hand")
+        case let .error(m): NoticeHUD.shared.show(m, symbol: NoticeHUD.errorSymbol)
+        case .ok: NoticeHUD.shared.show(on ? "“\(n)” applies on these displays" : "“\(n)” applies only by hand", symbol: "checkmark.circle")
         }
     }
 
@@ -186,22 +184,34 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     @objc private func saveProfile() {
         let a = NSAlert()
-        a.messageText = "Save current desk as profile"
-        a.informativeText = "Which app is in which pane on which display."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        a.icon = NSApp.applicationIconImage
+        a.messageText = "Save Current Desk as Profile"
+        a.informativeText = "Saves which app is in which tile on which display."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         field.placeholderString = "Profile name"
         a.accessoryView = field
-        a.addButton(withTitle: "Save")
+        let save = a.addButton(withTitle: "Save")
         a.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        guard a.runModal() == .alertFirstButtonReturn else { return }
+        // Save stays off until there is a name.
+        save.isEnabled = false
+        let guardian = NonEmptyFieldGuard(button: save)
+        field.delegate = guardian
+        a.window.initialFirstResponder = field
+        NSApp.activate()
+        let response = a.runModal()
+        withExtendedLifetime(guardian) {}
+        guard response == .alertFirstButtonReturn else { return }
         let name = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         switch PaneCore.shared.capture(name: name) {
         case let .success(p):
-            if case let .error(m) = PaneCore.shared.save(p) { NoticeHUD.shared.show(m) } else { NoticeHUD.shared.show("Saved “\(name)”") }
+            if case let .error(m) = PaneCore.shared.save(p) {
+                NoticeHUD.shared.show(m, symbol: NoticeHUD.errorSymbol)
+            } else {
+                NoticeHUD.shared.show("Saved “\(name)”", symbol: "checkmark.circle")
+            }
         case let .failure(e):
-            NoticeHUD.shared.show(e.message)
+            NoticeHUD.shared.show(e.message, symbol: NoticeHUD.errorSymbol)
         }
     }
 
@@ -214,11 +224,31 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func recover() { PaneCore.shared.recover() }
-    @objc private func grantAccess() { Permissions.explain() }
+    @objc private func grantAccess() { WelcomeWindow.shared.show() }
+
+    @objc private func about() {
+        NSApp.activate()
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
 
     @objc private func reload() {
-        if case let .error(m) = PaneCore.shared.reload() { NoticeHUD.shared.show("Config error: \(m)") }
+        if case let .error(m) = PaneCore.shared.reload() { NoticeHUD.shared.show("Config error: \(m)", symbol: NoticeHUD.errorSymbol) }
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+}
+
+/// Enables a button only while a text field holds something besides spaces.
+@MainActor
+private final class NonEmptyFieldGuard: NSObject, NSTextFieldDelegate {
+    weak var button: NSButton?
+
+    init(button: NSButton) {
+        self.button = button
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let f = obj.object as? NSTextField else { return }
+        button?.isEnabled = !f.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 }

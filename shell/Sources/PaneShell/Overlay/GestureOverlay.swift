@@ -18,7 +18,7 @@ final class GestureOverlay {
         let view = OverlayView(frame: NSRect(origin: .zero, size: bounds.size))
         view.preview = preview.offsetBy(dx: -bounds.minX, dy: -bounds.minY)
         view.outline = outline?.offsetBy(dx: -bounds.minX, dy: -bounds.minY)
-        view.label = label
+        if !label.isEmpty { view.addSubview(Self.pill(label, centeredIn: view.preview)) }
         p.contentView = view
         p.setFrame(bounds, display: true)
         p.orderFrontRegardless()
@@ -26,6 +26,22 @@ final class GestureOverlay {
 
     func hide() {
         panel?.orderOut(nil)
+    }
+
+    /// The label in a small glass capsule.
+    private static func pill(_ text: String, centeredIn r: NSRect) -> NSView {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = .labelColor
+        let size = label.fittingSize
+        let w = ceil(size.width + 28), h = ceil(size.height + 14)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        label.frame = NSRect(x: 14, y: (h - size.height) / 2, width: size.width, height: size.height)
+        container.addSubview(label)
+        let glass = NSGlassEffectView(frame: NSRect(x: r.midX - w / 2, y: r.midY - h / 2, width: w, height: h))
+        glass.cornerRadius = h / 2
+        glass.contentView = container
+        return glass
     }
 
     /// Global top-left rect -> Cocoa screen coordinates (bottom-left origin
@@ -60,39 +76,22 @@ final class GestureOverlay {
 private final class OverlayView: NSView {
     var preview: NSRect = .zero
     var outline: NSRect?
-    var label = ""
 
     override func draw(_ dirtyRect: NSRect) {
         let accent = NSColor.controlAccentColor
+        let radius = UIConstants.windowCornerRadius
         if let o = outline {
-            let path = NSBezierPath(roundedRect: o.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
+            let path = NSBezierPath(roundedRect: o.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius)
             path.lineWidth = 1.5
             path.setLineDash([6, 4], count: 2, phase: 0)
             accent.withAlphaComponent(0.5).setStroke()
             path.stroke()
         }
-        let box = NSBezierPath(roundedRect: preview.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
+        let box = NSBezierPath(roundedRect: preview.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius)
         accent.withAlphaComponent(0.25).setFill()
         box.fill()
         box.lineWidth = 2
         accent.setStroke()
         box.stroke()
-
-        guard !label.isEmpty else { return }
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: NSColor.white,
-        ]
-        let text = NSAttributedString(string: label, attributes: attrs)
-        let size = text.size()
-        let pill = NSRect(
-            x: preview.midX - size.width / 2 - 12,
-            y: preview.midY - size.height / 2 - 6,
-            width: size.width + 24,
-            height: size.height + 12
-        )
-        NSColor.black.withAlphaComponent(0.65).setFill()
-        NSBezierPath(roundedRect: pill, xRadius: pill.height / 2, yRadius: pill.height / 2).fill()
-        text.draw(at: NSPoint(x: pill.minX + 12, y: pill.minY + 6))
     }
 }

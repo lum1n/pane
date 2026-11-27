@@ -1,10 +1,12 @@
 # Pane
 
-A tiling window manager for macOS 14+ on Apple silicon. It has a window-first split tree (i3 style), per-display workspaces, no animations, and a menu bar icon that draws your live desk. Profiles save "which app in which pane on which screen" and restore it, launching apps that aren't running.
+A tiling window manager for macOS 26+ on Apple silicon. It has a window-first split tree (i3 style), per-display workspaces, no animations, and a menu bar icon that draws your live desk. Profiles save "which app in which pane on which screen" and restore it, launching apps that aren't running.
 
 Pane uses the public Accessibility API plus one private call (`_AXUIElementGetWindow`). It needs no SIP changes and does not use native Spaces. Hidden workspaces are parked one point inside the bottom-right corner of their display, and there are several ways to get them back (see [Recovery](#recovery)).
 
 ## Build and run (on the Mac)
+
+The shell needs Xcode 26 (Swift 6.2) on PATH.
 
 ```sh
 rustup target add aarch64-apple-darwin
@@ -14,13 +16,13 @@ make run                      # (re)launch it
 make install                  # copy to /Applications; `make link-cli` puts `pane` on PATH
 ```
 
-On first launch, macOS asks for Accessibility access. Tiling starts as soon as you grant it. `make agent` builds the headless `pane-agentd` (everything except the UI), which is handy for debugging from a terminal.
+On first launch, Pane opens a short welcome window that walks you through granting Accessibility access. Tiling starts as soon as you grant it. `make agent` builds the headless `pane-agentd` (everything except the UI), which is handy for debugging from a terminal.
 
 ## Use
 
 Every display has its own workspaces 1-9. They stay on their display: unplug a monitor and its workspaces wait, hidden, on the nearest remaining display (reachable from the menu), then go back when it returns. A new monitor plugged in at the same spot takes them over.
 
-All shortcuts are built on one **modifier** (`mod`, Option by default). Change it, or any single shortcut, in **Settings > Hotkeys**: tick the modifier keys you want, or click a shortcut and press a new one. Moving adds Shift and resizing adds Control; if Shift or Control is already part of the modifier, the next free key is used instead.
+All shortcuts are built on one **modifier** (`mod`, Option by default). Change it, or any single shortcut, in **Settings > Shortcuts**: tick the modifier keys you want, or click a shortcut and press a new one. Moving adds Shift and resizing adds Control; if Shift or Control is already part of the modifier, the next free key is used instead.
 
 | Keys | Action |
 |---|---|
@@ -53,9 +55,9 @@ To move a window with the mouse, hold the modifier (Option by default) over it a
 | the outer edge of a screen (48 pt band) | becomes a full-height column or full-width row on that side |
 | a screen with no tiles | fills that screen |
 
-Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Hotkeys or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
+Floating windows you drop become tiles. Typing, clicking or a hotkey while you hold the modifier is not a gesture. Turn it off in Settings > Shortcuts or with `gestures = false`; `gesture_modifier` gives gestures their own keys.
 
-Dragging a tiled window by its title bar works the same way, with no modifier: the outline shows where it will land, and letting go drops it there (the same targets as above). Let go over its own tile and it goes back. Pausing mid-drag is fine; the window stays where you hold it. This needs the pointer event tap (Input Monitoring); without it, or with `title_drag = false` (Settings > Hotkeys), a dragged tile snaps back.
+Dragging a tiled window by its title bar works the same way, with no modifier: the outline shows where it will land, and letting go drops it there (the same targets as above). Let go over its own tile and it goes back. Pausing mid-drag is fine; the window stays where you hold it. This needs the pointer event tap (Input Monitoring); without it, or with `title_drag = false` (Settings > Shortcuts), a dragged tile snaps back.
 
 `mod-z` undoes the last layout change: a move, resize, swap, title-bar or edge drag, move to another workspace, split direction, tiles/accordion, float/tile, or an applied profile. Press it again to go further back, up to 20 changes. Windows opened since stay where they are, and windows closed since are left out.
 
@@ -88,9 +90,9 @@ The menu bar icon draws your desk: each display, the visible workspace's tiles w
 
 Layout presets arrange a workspace for you. `layout master-stack` puts one large tile on the left (60% wide, `master_ratio`) and stacks the rest on the right; `layout columns 3` deals the tiles into three equal columns. The workspace keeps that shape as windows open and close, until `layout manual`. `balance` gives the tiles of the focused container equal sizes again. Run them from the palette (`>layout`, `>balance`) or bind them in `[shortcuts]`. See [docs/config.md](docs/config.md#layout-presets).
 
-The focused window gets a thin border in the accent colour. Settings > General > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
+The focused window gets a thin border in the accent colour. Settings > Focus changes its width and colour (`border_width = 0` turns it off) and can dim the other windows (`dim_unfocused`).
 
-Two pointer options, both off by default (Settings > General > Focus). `mouse_follows_focus = true` moves the pointer to the middle of the window you focus with a hotkey, the palette or the CLI, also onto another display (or to the middle of an empty display); it stays put if it is already over that window. `focus_follows_mouse = true` focuses the window under the pointer once the pointer has rested there for 150 ms. Only moving the pointer counts: windows that slide under a still pointer (a workspace switch) do not take focus, and neither does anything while you hold the gesture modifier.
+Two pointer options, both off by default (Settings > Focus). `mouse_follows_focus = true` moves the pointer to the middle of the window you focus with a hotkey, the palette or the CLI, also onto another display (or to the middle of an empty display); it stays put if it is already over that window. `focus_follows_mouse = true` focuses the window under the pointer once the pointer has rested there for 150 ms. Only moving the pointer counts: windows that slide under a still pointer (a workspace switch) do not take focus, and neither does anything while you hold the gesture modifier.
 
 The `pane` CLI talks to the running app over a Unix socket:
 
@@ -134,7 +136,7 @@ done
 
 Settings (gaps, behaviour, startup profile, apps that always float or tile, all hotkeys) are in **Settings…** in the menu. They are stored in `~/Library/Application Support/Pane/config.toml`, which you can also edit by hand; see [docs/config.md](docs/config.md). Displays, workspaces and window rules are edited in the file.
 
-**Settings > General > Startup and updates** turns on **Open Pane at login** (a macOS login item; if macOS asks, allow Pane in System Settings > General > Login Items). Pane also checks the [GitHub releases](https://github.com/lum1n/pane/releases) once a day and, when there is a newer version, shows a notice and a menu item that opens the release page; it never downloads or installs anything. Turn that off there, or check by hand with **Check for Updates…** in the menu. Releases are tagged `vX.Y.Z` and compared with `CFBundleShortVersionString` in `shell/Resources/Info.plist`, so bump that before tagging.
+**Settings > General > Startup and Updates** turns on **Open Pane at login** (a macOS login item; if macOS asks, allow Pane in System Settings > General > Login Items). Pane also checks the [GitHub releases](https://github.com/lum1n/pane/releases) once a day and, when there is a newer version, shows a notice and a menu item that opens the release page; it never downloads or installs anything. Turn that off there, or check by hand with **Check for Updates…** in the menu. Releases are tagged `vX.Y.Z` and compared with `CFBundleShortVersionString` in `shell/Resources/Info.plist`, so bump that before tagging.
 
 ## Recovery
 
