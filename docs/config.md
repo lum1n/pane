@@ -26,6 +26,7 @@ gesture_modifier = ""            # keys for gestures; empty = same as `modifier`
 border_width = 2                 # border around the focused window, points; 0 = off
 border_color = "accent"          # "accent" (system accent) or "#rrggbb" / "#rrggbbaa"
 dim_unfocused = 0                # darken unfocused windows, 0 (off) to 0.8
+master_ratio = 0.6               # width share of the large tile in `layout master-stack`, 0.1 to 0.9
 
 # Name displays. Each alias needs exactly one of: position, uuid, match_name.
 [[display]]
@@ -167,6 +168,10 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `focus-display next\|prev` | |
 | `move-workspace-to-display next\|prev` | |
 | `toggle-orientation`, `toggle-layout`, `toggle-float` | |
+| `balance` | give the tiles next to the focused one (its container) equal sizes |
+| `layout master-stack [PERCENT]` | one large tile on the left, the rest stacked on the right; PERCENT (10-90) is the large tile's width, default `master_ratio`. Kept as windows come and go |
+| `layout columns N` | N equal columns (1-12), each stacking its tiles. Kept as windows come and go |
+| `layout manual` | stop keeping a layout; the tiles stay where they are |
 | `toggle-fullscreen` | zoom the focused tile to fill its display; ends when another window there is focused or a new tile opens |
 | `swap-workspaces` | swap with the next display |
 | `reload`, `profile-picker`, `open-editor` | |
@@ -177,6 +182,19 @@ Modifiers are `cmd`, `alt`, `ctrl`, `shift`, `hyper`, `meh` and `mod`. Keys are 
 | `profile-apply NAME` | |
 | `profile-when here\|off NAME` | `here`: apply NAME by itself whenever exactly the displays connected now are connected (writes its `[when]`); `off`: only by hand |
 | `recover`, `recover --all-apps` | |
+
+## Layout presets
+
+`layout master-stack` and `layout columns N` rearrange the focused workspace's tiles, in their current order, and the workspace remembers the layout (in `state.json`, so it survives a restart). Whenever the number of tiles there changes (a window opens, closes, or moves in or out), Pane rearranges them again:
+
+- **master-stack**: the first tile is the master, on the left at `master_ratio` of the width (or the percentage given); the others share a column on the right. When the master closes, the next tile takes its place. If you resize the master, it keeps that width when windows come and go.
+- **columns N**: the tiles are dealt into N equal columns, earlier columns taking one more when they don't divide evenly. With N or fewer tiles, each gets its own column.
+
+Between those changes you can still move, split and resize by hand; the next window that opens or closes puts the layout back. `layout manual` turns this off, and applying a profile to the workspace replaces the layout with the profile's own. `pane query workspaces` shows each workspace's `layout`.
+
+`balance` doesn't need a preset: it evens out the container of the focused tile (the workspace's top level when nothing is focused), leaving the other splits alone.
+
+None of these has a default shortcut. Bind them in `[shortcuts]` (for example `"mod-e" = "balance"`, `"mod-m" = "layout master-stack"`) or run them from the palette (`mod-/`, then `>layout`).
 
 ## Events (`pane subscribe`)
 

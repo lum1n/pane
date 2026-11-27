@@ -23,7 +23,26 @@ pub struct Workspace {
     pub focused: Option<WindowId>,
     /// Tiled window zoomed to fill the display (others stay behind it).
     pub fullscreen: Option<WindowId>,
+    /// Layout preset kept up as tiles come and go (`layout ...`).
+    pub layout: Option<LayoutMode>,
 }
+
+/// A layout a workspace keeps: the reducer re-arranges its tiles into this
+/// shape whenever the number of tiles changes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "kebab-case")]
+pub enum LayoutMode {
+    /// One large tile on the left, the others stacked in a column on the
+    /// right. `ratio` is the master tile's share of the width.
+    MasterStack { ratio: f64 },
+    /// `n` columns of equal width, each stacking its tiles.
+    Columns { n: usize },
+}
+
+/// Smallest and largest master share.
+pub const MASTER_RATIO_RANGE: std::ops::RangeInclusive<f64> = 0.1..=0.9;
+/// Most columns `layout columns N` accepts.
+pub const MAX_COLUMNS: usize = 12;
 
 impl Workspace {
     /// Hosted on another display because its own is unplugged.
