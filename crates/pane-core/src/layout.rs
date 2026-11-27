@@ -13,7 +13,12 @@ pub struct LayoutOutput {
 }
 
 pub struct LayoutInput<'a> {
+    /// Space between tiles.
     pub inner_gap: f64,
+    /// Space between the tiles and the edge of the area.
+    pub outer_gap: f64,
+    /// Drop both gaps when the tree shows a single tile.
+    pub smart_gaps: bool,
     /// Leaves for which this returns false take no space (windows of apps
     /// that quit and may come back, slots that are no longer pending).
     pub present: &'a dyn Fn(&Leaf) -> bool,
@@ -21,10 +26,42 @@ pub struct LayoutInput<'a> {
     pub min_size: &'a dyn Fn(&Leaf) -> Size,
 }
 
+/// Lay out the tree at `root` in `area` (a display's visible frame): the
+/// outer gap is taken off its edges, the inner gap between tiles. With
+/// `smart_gaps`, a tree that shows a single tile fills `area`.
 pub fn compute(tree: &Tree, root: NodeId, area: Rect, input: &LayoutInput) -> LayoutOutput {
+    let single = input.smart_gaps && tile_count(tree, root, input) <= 1;
+    let (inner, outer) = if single {
+        (0.0, 0.0)
+    } else {
+        (input.inner_gap, input.outer_gap)
+    };
+    let input = LayoutInput {
+        inner_gap: inner,
+        outer_gap: outer,
+        smart_gaps: input.smart_gaps,
+        present: input.present,
+        min_size: input.min_size,
+    };
     let mut out = LayoutOutput::default();
-    place(tree, root, area, input, &mut out);
+    place(tree, root, area.inset(outer), &input, &mut out);
     out
+}
+
+/// How many separate tiles the tree at `id` shows: the windows of an
+/// accordion are stacked in one tile.
+fn tile_count(tree: &Tree, id: NodeId, input: &LayoutInput) -> usize {
+    match &tree.node(id).map(|n| &n.kind) {
+        Some(NodeKind::Leaf(l)) => usize::from((input.present)(l)),
+        Some(NodeKind::Container(c)) => {
+            let kids = c.children.iter().map(|ch| tile_count(tree, *ch, input));
+            match c.layout {
+                ContainerLayout::Accordion => kids.max().unwrap_or(0),
+                ContainerLayout::Tiles => kids.sum(),
+            }
+        }
+        None => 0,
+    }
 }
 
 fn is_present(tree: &Tree, id: NodeId, input: &LayoutInput) -> bool {
@@ -170,6 +207,8 @@ mod tests {
     fn input<'a>(min: &'a dyn Fn(&Leaf) -> Size) -> LayoutInput<'a> {
         LayoutInput {
             inner_gap: 10.0,
+            outer_gap: 0.0,
+            smart_gaps: false,
             present: &|_| true,
             min_size: min,
         }
@@ -217,6 +256,8 @@ mod tests {
         let min = |_: &Leaf| Size::ZERO;
         let inp = LayoutInput {
             inner_gap: 0.0,
+            outer_gap: 0.0,
+            smart_gaps: false,
             present: &present,
             min_size: &min,
         };
@@ -234,5 +275,72 @@ mod tests {
         let min = |_: &Leaf| Size::ZERO;
         let out = compute(&t, root, Rect::new(0.0, 0.0, 100.0, 100.0), &input(&min));
         assert_eq!(out.frames[0].1, out.frames[1].1);
+    }
+
+    fn gapped<'a>(min: &'a dyn Fn(&Leaf) -> Size, smart: bool) -> LayoutInput<'a> {
+        LayoutInput {
+            inner_gap: 10.0,
+            outer_gap: 5.0,
+            smart_gaps: smart,
+            present: &|_| true,
+            min_size: min,
+        }
+    }
+
+    fn row(layout: ContainerLayout, n: u32) -> (Tree, NodeId) {
+        let mut t = Tree::new();
+        let root = t.new_root(Orientation::Horizontal, layout);
+        for i in 1..=n {
+            t.insert_leaf(root, Leaf::Window(WindowId(i)), InsertAt::End);
+        }
+        (t, root)
+    }
+
+    #[test]
+    fn outer_gap_insets_the_area() {
+        let (t, root) = row(ContainerLayout::Tiles, 1);
+        let min = |_: &Leaf| Size::ZERO;
+        let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let out = compute(&t, root, area, &gapped(&min, false));
+        assert_eq!(out.frames[0].1, Rect::new(5.0, 5.0, 90.0, 90.0));
+    }
+
+    #[test]
+    fn smart_gaps_drop_gaps_for_a_single_tile() {
+        let min = |_: &Leaf| Size::ZERO;
+        let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let (t, root) = row(ContainerLayout::Tiles, 1);
+        let out = compute(&t, root, area, &gapped(&min, true));
+        assert_eq!(out.frames[0].1, area);
+
+        // An accordion stacks its windows in one tile.
+        let (t, root) = row(ContainerLayout::Accordion, 3);
+        let out = compute(&t, root, area, &gapped(&min, true));
+        assert!(out.frames.iter().all(|f| f.1 == area));
+
+        // Two tiles keep both gaps.
+        let (t, root) = row(ContainerLayout::Tiles, 2);
+        let out = compute(
+            &t,
+            root,
+            Rect::new(0.0, 0.0, 120.0, 100.0),
+            &gapped(&min, true),
+        );
+        assert_eq!(out.frames[0].1, Rect::new(5.0, 5.0, 50.0, 90.0));
+        assert_eq!(out.frames[1].1, Rect::new(65.0, 5.0, 50.0, 90.0));
+    }
+
+    #[test]
+    fn smart_gaps_count_only_present_tiles() {
+        let (t, root) = row(ContainerLayout::Tiles, 2);
+        let present = |l: &Leaf| l.window() != Some(WindowId(2));
+        let min = |_: &Leaf| Size::ZERO;
+        let inp = LayoutInput {
+            present: &present,
+            ..gapped(&min, true)
+        };
+        let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let out = compute(&t, root, area, &inp);
+        assert_eq!(out.frames, vec![(out.frames[0].0, area)]);
     }
 }

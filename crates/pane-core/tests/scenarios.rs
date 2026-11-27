@@ -278,6 +278,33 @@ fn tiles_on_focused_display_and_relayouts_on_close() {
 }
 
 #[test]
+fn smart_and_per_display_gaps() {
+    let c = Config::parse(
+        "[settings]\ninner_gap = 6\nouter_gap = 6\nsmart_gaps = true\n\
+         [[display]]\nname = \"middle\"\nposition = \"center\"\ninner_gap = 20\nouter_gap = 10\n",
+    )
+    .unwrap();
+    let mut s = Sim::with(Model::new(c, 1_000_000));
+    s.launch(100, "com.apple.Terminal");
+    // One tile on the centre display fills its visible frame.
+    s.window(100, 1, "term 1", CENTER);
+    assert_eq!(s.frame(1), Rect::new(0.0, 30.0, 1920.0, 1050.0));
+    // A second tile brings back the centre display's own gaps.
+    s.window(100, 2, "term 2", CENTER);
+    assert_eq!(s.frame(1).x, 10.0);
+    assert_eq!(s.frame(1).y, 40.0);
+    assert_eq!(s.frame(1).h, 1030.0);
+    assert_eq!(s.frame(2).x - s.frame(1).max_x(), 20.0);
+    assert_eq!(s.frame(2).max_x(), 1910.0);
+    // Closing one drops the gaps again.
+    s.ev(Event::WindowDestroyed {
+        pid: 100,
+        wid: WindowId(2),
+    });
+    assert_eq!(s.frame(1), Rect::new(0.0, 30.0, 1920.0, 1050.0));
+}
+
+#[test]
 fn dialogs_float_and_keep_their_frame() {
     let mut s = Sim::new();
     s.launch(100, "com.apple.TextEdit");
