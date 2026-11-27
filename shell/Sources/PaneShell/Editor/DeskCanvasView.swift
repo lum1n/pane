@@ -4,7 +4,7 @@ import SwiftUI
 /// The real display arrangement with each display's slot tree drawn inside.
 @MainActor
 struct DeskCanvasView: View {
-    @ObservedObject var model: EditorModel
+    let model: EditorModel
 
     /// Resolve a profile display reference against connected displays,
     /// mirroring `DisplayRef::resolve` in pane-core.
@@ -65,42 +65,32 @@ struct DeskCanvasView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            GeometryReader { geo in
-                let gs = groups
-                let rects = layout(gs, in: geo.size)
-                ZStack(alignment: .topLeading) {
-                    Color(nsColor: .underPageBackgroundColor)
-                    ForEach(Array(gs.enumerated()), id: \.element.key) { i, g in
-                        if i < rects.count {
-                            DisplayBox(model: model, group: g)
-                                .frame(width: rects[i].width, height: rects[i].height)
-                                .offset(x: rects[i].minX, y: rects[i].minY)
-                        }
-                    }
-                    if model.profile.display.isEmpty {
-                        Text("No displays in this profile. Use “New” or “Capture Current”.")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        GeometryReader { geo in
+            let gs = groups
+            let rects = layout(gs, in: geo.size)
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(gs.enumerated()), id: \.element.key) { i, g in
+                    if i < rects.count {
+                        DisplayBox(model: model, group: g)
+                            .frame(width: rects[i].width, height: rects[i].height)
+                            .offset(x: rects[i].minX, y: rects[i].minY)
                     }
                 }
             }
-            HStack {
-                Menu("Add Display") {
-                    ForEach(["left", "center", "right", "main"], id: \.self) { r in
-                        Button(r.capitalized) { model.addDisplay(ref: r) }
-                    }
-                    ForEach(model.snapshot?.displays ?? [], id: \.id) { d in
-                        Button(d.name) { model.addDisplay(ref: "uuid:\(d.id)") }
-                    }
+        }
+        .background(.windowBackground)
+        .overlay {
+            if model.profile.display.isEmpty {
+                ContentUnavailableView {
+                    Label("No Displays", systemImage: "display")
+                } description: {
+                    Text("Start from the connected displays, or capture the desk as it is now.")
+                } actions: {
+                    Button("New Profile") { model.newProfile() }
+                    Button("Capture Current Desk") { model.capture() }
+                        .buttonStyle(.borderedProminent)
                 }
-                .frame(width: 130)
-                Text("Each display has its own workspaces. ★ marks the one it shows after applying.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
             }
-            .padding(8)
         }
     }
 }
@@ -116,8 +106,9 @@ struct DisplayGroup {
 
 @MainActor
 private struct DisplayBox: View {
-    @ObservedObject var model: EditorModel
+    let model: EditorModel
     let group: DisplayGroup
+    @State private var renaming = false
     @State private var name = ""
 
     /// Entry shown in this box: the selected tab, else the visible one, else the first.
@@ -128,65 +119,96 @@ private struct DisplayBox: View {
 
     var body: some View {
         let cur = current
-        VStack(spacing: 0) {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        VStack(spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: "display")
-                Text(group.title).font(.caption.bold()).lineLimit(1)
+                Image(systemName: "display").foregroundStyle(.secondary)
+                Text(group.title).font(.callout.weight(.semibold)).lineLimit(1)
                 Spacer()
-                Button { model.removeEntries(group.entries) } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.borderless)
-                    .help("Remove this display from the profile")
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 4)
-            HStack(spacing: 4) {
-                ForEach(group.entries, id: \.self) { i in
-                    if let pd = model.profile.display[safe: i] {
-                        Button {
-                            model.selectedTab[group.key] = i
-                        } label: {
-                            Text((pd.isVisible ? "★ " : "") + pd.workspace)
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(RoundedRectangle(cornerRadius: 5)
-                                    .fill(i == cur ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.1)))
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button("Show This Workspace After Applying") { model.setVisible(i) }
-                            Button("Remove Workspace") { model.removeEntries([i]) }
-                        }
-                        .help("Workspace \(pd.workspace). Right-click for options.")
-                    }
+                Button { model.removeEntries(group.entries) } label: {
+                    Image(systemName: "xmark.circle.fill").symbolRenderingMode(.hierarchical)
                 }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Remove this display from the profile")
+            }
+            HStack(spacing: 6) {
+                tabs(cur)
                 Button { model.addWorkspace(like: cur, groupKey: group.key) } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless)
                     .help("Add a workspace to this display")
                 Spacer()
-                Text("Name").font(.caption).foregroundStyle(.secondary)
-                TextField("", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                    .frame(width: 56)
-                    .onSubmit { model.setWorkspace(display: cur, name) }
+                Button {
+                    name = model.profile.display[safe: cur]?.workspace ?? ""
+                    renaming = true
+                } label: { Image(systemName: "pencil") }
+                .buttonStyle(.borderless)
+                .help("Rename this workspace")
+                .popover(isPresented: $renaming, arrowEdge: .bottom) {
+                    HStack {
+                        TextField("Workspace", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 140)
+                            .onSubmit {
+                                model.setWorkspace(display: cur, name)
+                                renaming = false
+                            }
+                        Button("Rename") {
+                            model.setWorkspace(display: cur, name)
+                            renaming = false
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    }
+                    .padding(12)
+                }
                 Button { model.setVisible(cur) } label: {
                     Image(systemName: model.profile.display[safe: cur]?.isVisible == true ? "star.fill" : "star")
                 }
                 .buttonStyle(.borderless)
+                .foregroundStyle(model.profile.display[safe: cur]?.isVisible == true ? Color.yellow : Color.secondary)
                 .help("Show this workspace on the display after applying")
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
             if let pd = model.profile.display[safe: cur] {
                 TileTreeView(model: model, node: pd.tree, ref: TileRef(display: cur, path: []))
-                    .padding(4)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.5), lineWidth: 1))
-        .onAppear { name = model.profile.display[safe: cur]?.workspace ?? "" }
-        .onChange(of: cur) { _, c in name = model.profile.display[safe: c]?.workspace ?? "" }
-        .onChange(of: model.profile.display[safe: cur]?.workspace) { _, w in name = w ?? "" }
+        .padding(10)
+        .background(shape.fill(.background))
+        .overlay(shape.strokeBorder(.separator))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+    }
+
+    /// Workspace tabs as compact capsules; ★ marks the one shown after applying.
+    private func tabs(_ cur: Int) -> some View {
+        HStack(spacing: 2) {
+            ForEach(group.entries, id: \.self) { i in
+                if let pd = model.profile.display[safe: i] {
+                    Button {
+                        model.selectedTab[group.key] = i
+                    } label: {
+                        HStack(spacing: 3) {
+                            if pd.isVisible {
+                                Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow)
+                            }
+                            Text(pd.workspace)
+                        }
+                        .font(.caption.weight(i == cur ? .semibold : .regular))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(i == cur ? Color.accentColor.opacity(0.22) : .clear))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Show This Workspace After Applying") { model.setVisible(i) }
+                        Button("Remove Workspace", role: .destructive) { model.removeEntries([i]) }
+                    }
+                    .help("Workspace \(pd.workspace). Right-click for options.")
+                    .accessibilityAddTraits(i == cur ? .isSelected : [])
+                }
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.secondary.opacity(0.1)))
     }
 }

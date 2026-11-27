@@ -92,7 +92,7 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Quit Pane while it is hidden: the window comes back on screen.
 - [ ] Menu bar icon → Scratchpads lists each scratchpad, checked while shown; clicking toggles it. With none configured it says so.
 - [ ] Menu bar icon → Summon lists running apps; picking one moves its window next to the focused tile without switching workspace.
-- [ ] Settings → Scratchpads: Add Scratchpad, pick a running app, set a key and size, Save; `config.toml` gets a `[[scratchpad]]` (comments elsewhere intact) and the key works at once. Remove it and Save: the table is gone and the window is let go.
+- [ ] Settings → Scratchpads: click +, pick a running app in the sheet, set a key and size, Save; `config.toml` gets a `[[scratchpad]]` (comments elsewhere intact) and the key works at once. Select it and click −: the table is gone and the window is let go.
 - [ ] A bad size (`big`) shows the config error in the tab and leaves `config.toml` unchanged.
 - [ ] `pane do "summon Safari"` from another workspace moves a Safari window next to the focused tile without switching workspace; with Safari not running it opens.
 
@@ -119,7 +119,7 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Quit Pane: the subscriber exits with status 0.
 
 ## Launch at login and updates
-- [ ] `make install`, open /Applications/Pane.app, Settings > General > Startup and updates: tick **Open Pane at login**. Pane is listed in System Settings > General > Login Items; log out and in: Pane starts.
+- [ ] `make install`, open /Applications/Pane.app, Settings > General > Startup and Updates: tick **Open Pane at login**. Pane is listed in System Settings > General > Login Items; log out and in: Pane starts.
 - [ ] If macOS shows "needs approval", the orange line and **Open Login Items** appear; allow Pane there and come back to Settings: the toggle is on and the line is gone.
 - [ ] Untick it: Pane leaves Login Items.
 - [ ] **Check for Updates…** in the menu with no newer release: "You're up to date". Offline: "Couldn't check for updates" with the reason.
@@ -132,7 +132,7 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] `mod-2` to a workspace with windows puts the pointer on the window that gets focus, at its new place.
 - [ ] With `focus_follows_mouse = true`, resting the pointer on another tile focuses it (border follows) after a moment; sweeping across tiles quickly does not focus the ones passed over.
 - [ ] Switching workspace under a still pointer does not change focus. Holding Option and pointing (gesture) does not focus anything.
-- [ ] Both toggles in Settings > General > Focus take effect without restarting.
+- [ ] Both toggles in Settings > Focus take effect without restarting.
 
 ## Doctor
 - [ ] With Pane running and permissions granted, `pane doctor` shows Accessibility and Input Monitoring for Pane (no "this terminal"), `Hotkeys: running`, the displays as in `pane query displays`, `run.lock: held by pid` Pane's pid, and exits 0.
@@ -142,3 +142,23 @@ Run these after `make run`, with `make logs` open in a terminal. `pane` refers t
 - [ ] Break `config.toml` (`gaps = 999`) without reloading: `Config: ERROR` with the message. Reload, fix the file, run again: "fixed on disk, but Pane still runs on defaults".
 - [ ] Quit Pane: `pane doctor` says not running, shows the terminal's permissions, the displays, and `run.lock: none`.
 - [ ] `kill -9` Pane: `run.lock: STALE` with the parked window count; starting Pane clears it.
+
+## UI polish (macOS 26)
+Build with Xcode 26 on PATH (`make app && make run`); check in light and dark mode, and again with Increase Contrast and Reduce Transparency on.
+- [ ] **Settings**: the toolbar tabs (General, Layout, Focus, Apps, Scratchpads, Shortcuts) switch, the window title follows the tab, and the window takes each pane's height.
+- [ ] Every control round-trips to `config.toml`: change a gap with the stepper, check the file, change it back. The status capsule at the bottom shows the result and goes away after about 4 s.
+- [ ] Shortcuts: click a keycap, press a new chord; it records ("Type shortcut…" with an accent outline) and Esc cancels. Hovering a row shows Reset and Clear; the row's context menu has the same; double-clicking a row records. The search field filters. **Reset All…** asks first.
+- [ ] Apps: + offers running apps (with icons), Choose Application… and Enter Bundle ID or Glob… (sheet). Selecting a row and − removes it. An empty list shows "No Apps".
+- [ ] Scratchpads: + opens the sheet; Save writes `[[scratchpad]]`. Double-click or Edit… edits; an invalid entry keeps the sheet open with the error.
+- [ ] General: the Accessibility capsule is green when granted, orange with **Open Settings** when not. Check Now shows a spinner while checking.
+- [ ] **Profile editor**: the toolbar shows Profiles, New, Capture, Compare, Undo/Redo, Add Display, Save (menu: Save as Startup Profile) and a glass **Apply**. ⌘S saves, ⌘Z/⇧⌘Z undo and redo.
+- [ ] Rename by editing the window title, and with Profiles > Rename…; Open lists the new name after saving.
+- [ ] Sidebar search filters apps, with "Running" and "Applications" sections. Dragging an app onto a tile highlights the half it will take (edge) or the whole tile (middle) and drops there. Dragging tiles still swaps and moves.
+- [ ] The inspector button shows and hides the inspector. With a tile selected: header with icon, Matching, Workspace (rename, Show after applying), Layout (segmented split direction, Accordion), Remove Tile. With nothing selected: "No Tile Selected".
+- [ ] A profile with no displays shows "No Displays" with New Profile and Capture Current Desk.
+- [ ] Compare with the desk drifted: rows with tinted badges, and Cancel / Edit Before Saving / glass Update Profile in the toolbar. With no drift: "No Differences".
+- [ ] **Palette** (`mod-/`): a glass panel with a magnifier. It takes typing without activating Pane; arrows, Enter and Esc work; the selection is a rounded accent rect, readable in light and dark. Shortcuts show as keycaps, the current item has a "Current" tag, and a query with no results shows "No matches".
+- [ ] **HUD**: Reload with a broken config: a glass capsule with a warning symbol fades in and out. With Reduce Motion on, it appears and disappears at once.
+- [ ] **Gesture overlay**: the preview has 12 pt corners and the label sits in a glass pill; nothing animates. The focus border's corners match the window's.
+- [ ] **Menu**: displays are section headers, workspace window counts are badges, every action has a symbol, and **About Pane** opens the About panel. **Save Current Desk as Profile…**: Save stays disabled until a name is typed.
+- [ ] **Onboarding**: `tccutil reset Accessibility com.vegard.pane`, launch: the welcome window opens. **Open System Settings**, turn Pane on: the window flips to "You're all set" with **Done** within a second. The menu's **Grant Accessibility Access…** opens the same window.

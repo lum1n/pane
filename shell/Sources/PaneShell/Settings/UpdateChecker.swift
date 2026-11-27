@@ -1,5 +1,5 @@
 import AppKit
-import Combine
+import Observation
 
 /// A GitHub release, from `GET /repos/{owner}/{repo}/releases/latest`
 /// (which already leaves out drafts and pre-releases).
@@ -17,7 +17,8 @@ struct Release: Decodable, Equatable {
 /// downloads or installs anything, so it needs no signing keys or appcast.
 /// When on, it checks at launch and then at most once a day.
 @MainActor
-final class UpdateChecker: ObservableObject {
+@Observable
+final class UpdateChecker {
     static let shared = UpdateChecker()
 
     static let releasesPage = URL(string: "https://github.com/lum1n/pane/releases")!
@@ -31,25 +32,28 @@ final class UpdateChecker: ObservableObject {
     }
 
     /// Check automatically (default on).
-    @Published var automatic: Bool {
-        didSet {
-            UserDefaults.standard.set(automatic, forKey: Key.automatic)
-            if automatic { checkIfDue() }
+    var automatic: Bool {
+        get { automaticStorage }
+        set {
+            automaticStorage = newValue
+            UserDefaults.standard.set(newValue, forKey: Key.automatic)
+            if newValue { checkIfDue() }
         }
     }
+    private var automaticStorage: Bool
 
     /// A release newer than the running app, if the last check found one.
-    @Published private(set) var available: Release?
-    @Published private(set) var checking = false
+    private(set) var available: Release?
+    private(set) var checking = false
     /// Result of the last check, for Settings.
-    @Published private(set) var status: String?
+    private(set) var status: String?
 
-    private var timer: Timer?
+    @ObservationIgnored private var timer: Timer?
 
     var lastCheck: Date? { UserDefaults.standard.object(forKey: Key.lastCheck) as? Date }
 
     private init() {
-        automatic = UserDefaults.standard.object(forKey: Key.automatic) as? Bool ?? true
+        automaticStorage = UserDefaults.standard.object(forKey: Key.automatic) as? Bool ?? true
     }
 
     /// Call once at launch.
@@ -135,7 +139,7 @@ final class UpdateChecker: ObservableObject {
         a.informativeText = "You have \(AppVersion.current). The release page has the download and what changed."
         a.addButton(withTitle: "Open Release Page")
         a.addButton(withTitle: "Later")
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         if a.runModal() == .alertFirstButtonReturn {
             NSWorkspace.shared.open(URL(string: r.html_url) ?? Self.releasesPage)
         }
@@ -145,7 +149,7 @@ final class UpdateChecker: ObservableObject {
         let a = NSAlert()
         a.messageText = title
         a.informativeText = text
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         a.runModal()
     }
 }

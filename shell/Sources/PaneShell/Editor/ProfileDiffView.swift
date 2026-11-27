@@ -5,8 +5,12 @@ import SwiftUI
 /// workspace, with “Update Profile” to save the desk into it.
 @MainActor
 struct ProfileDiffView: View {
-    @ObservedObject var model: EditorModel
+    let model: EditorModel
     let diff: ProfileDiff
+
+    private var differs: Bool {
+        diff.entries.contains { $0.change != "unchanged" && $0.change != "not_connected" }
+    }
 
     private var summary: String {
         let changed = diff.entries.filter { $0.change == "changed" || $0.change == "removed" }.count
@@ -19,41 +23,37 @@ struct ProfileDiffView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("“\(diff.name)” compared with the current desk").font(.headline)
-                    Text(summary).font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Cancel") { model.diff = nil }
-                    .keyboardShortcut(.cancelAction)
-                Button("Edit Before Saving") { model.editDiff() }
-                    .help("Open the updated profile in the editor without saving it")
-                Button("Update Profile") { model.acceptDiff() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+        if !differs {
+            ContentUnavailableView {
+                Label("No Differences", systemImage: "checkmark.circle")
+            } description: {
+                Text("The desk matches “\(diff.name)”.")
+            } actions: {
+                Button("Done") { model.diff = nil }
             }
-            .padding(12)
-            Divider()
-            HStack(spacing: 12) {
-                Text("Saved profile").frame(maxWidth: .infinity)
-                Text("Current desk").frame(maxWidth: .infinity)
-            }
-            .font(.caption.bold())
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
+            .background(.windowBackground)
+        } else {
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("“\(diff.name)” compared with the current desk").font(.title3.weight(.semibold))
+                        Text(summary).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.bottom, 4)
+                    HStack(spacing: 12) {
+                        Text("Saved Profile").frame(maxWidth: .infinity)
+                        Text("Current Desk").frame(maxWidth: .infinity)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                     ForEach(Array(diff.entries.enumerated()), id: \.offset) { _, e in
                         DiffRow(entry: e, saved: e.saved.flatMap { diff.saved.display[safe: $0] }, displays: model.snapshot?.displays ?? [])
                     }
                 }
-                .padding(16)
+                .padding(20)
             }
+            .background(.windowBackground)
         }
-        .background(Color(nsColor: .underPageBackgroundColor))
     }
 }
 
@@ -99,10 +99,11 @@ private struct DiffRow: View {
                 Image(systemName: "display")
                 Text(title).font(.callout.bold())
                 Text(badge.0)
-                    .font(.caption)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(badge.1.opacity(0.2)))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(badge.1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(badge.1.opacity(0.15)))
                 Text(details).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
             }
@@ -116,9 +117,10 @@ private struct DiffRow: View {
             }
             .frame(height: quiet ? 90 : 150)
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.4), lineWidth: 1))
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.background))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.separator))
+        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
         .opacity(quiet ? 0.7 : 1)
     }
 
@@ -128,14 +130,14 @@ private struct DiffRow: View {
             MiniTree(node: t, highlight: highlight, color: color)
                 .padding(4)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.secondary.opacity(0.08)))
         } else {
             placeholder(empty)
         }
     }
 
     private func placeholder(_ text: String) -> some View {
-        RoundedRectangle(cornerRadius: 6)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
             .foregroundStyle(.secondary)
             .overlay(Text(text).font(.caption).foregroundStyle(.secondary))
@@ -157,15 +159,15 @@ struct MiniTree: View {
         switch node {
         case let .container(orientation, layout, weights, children):
             if children.isEmpty {
-                AnyView(Color.clear)
+                Color.clear
             } else {
-                AnyView(split(horizontal: orientation == "horizontal", accordion: layout == "accordion",
-                              weights: weights, children: children))
+                split(horizontal: orientation == "horizontal", accordion: layout == "accordion",
+                      weights: weights, children: children)
             }
         case let .slot(slot):
-            AnyView(tile(slot))
+            tile(slot)
         case .window:
-            AnyView(Color.clear)
+            Color.clear
         }
     }
 
@@ -197,11 +199,11 @@ struct MiniTree: View {
         let marked = highlight.contains(slot.bundle_id)
         return GeometryReader { geo in
             let side = max(min(28, geo.size.width * 0.4, geo.size.height * 0.45), 8)
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill((marked ? color : Color.accentColor).opacity(marked ? 0.18 : 0.1))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(marked ? color : Color.secondary.opacity(0.5), lineWidth: marked ? 2 : 1)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(marked ? color : Color.primary.opacity(0.12), lineWidth: marked ? 2 : 1)
                 )
                 .overlay(
                     VStack(spacing: 2) {

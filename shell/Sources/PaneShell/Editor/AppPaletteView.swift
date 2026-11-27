@@ -53,6 +53,14 @@ enum AppIcons {
         return image
     }
 
+    /// A 16 pt copy of the icon, for menus.
+    @MainActor
+    static func small(for bundleId: String) -> NSImage {
+        let image = (icon(for: bundleId).copy() as? NSImage) ?? NSImage()
+        image.size = NSSize(width: 16, height: 16)
+        return image
+    }
+
     static func name(for bundleId: String) -> String {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
             return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
@@ -61,6 +69,7 @@ enum AppIcons {
     }
 }
 
+/// The editor's sidebar: apps to drag onto tiles, running ones first.
 @MainActor
 struct AppPaletteView: View {
     @State private var apps: [PaletteApp] = []
@@ -73,33 +82,49 @@ struct AppPaletteView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            TextField("Search apps", text: $search)
-                .textFieldStyle(.roundedBorder)
-                .padding(8)
-            List(filtered) { app in
-                HStack(spacing: 8) {
-                    Image(nsImage: AppIcons.icon(for: app.bundleId))
-                        .resizable()
-                        .frame(width: 22, height: 22)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(app.name).lineLimit(1)
-                        if app.running {
-                            Text("running").font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-                .draggable(DragPayload.app(bundle: app.bundleId)) {
-                    Label(app.name, systemImage: "app")
-                }
+        let shown = filtered
+        let running = shown.filter(\.running)
+        let others = shown.filter { !$0.running }
+        List {
+            if !running.isEmpty {
+                Section("Running") { ForEach(running) { row($0) } }
             }
-            Text("Drag an app onto a tile: middle replaces, edges split.")
+            if !others.isEmpty {
+                Section("Applications") { ForEach(others) { row($0) } }
+            }
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if shown.isEmpty && !apps.isEmpty {
+                ContentUnavailableView.search(text: search)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            Text("Drag an app onto a tile: the middle replaces it, the edges split it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
         }
+        .searchable(text: $search, placement: .sidebar, prompt: "Search Apps")
         .onAppear { if apps.isEmpty { apps = AppCatalog.load() } }
+    }
+
+    private func row(_ app: PaletteApp) -> some View {
+        Label {
+            Text(app.name).lineLimit(1)
+        } icon: {
+            AppIconView(bundleId: app.bundleId, size: 20)
+        }
+        .contentShape(Rectangle())
+        .draggable(DragPayload.app(bundle: app.bundleId)) {
+            Label {
+                Text(app.name)
+            } icon: {
+                AppIconView(bundleId: app.bundleId, size: 24)
+            }
+            .padding(6)
+        }
     }
 }

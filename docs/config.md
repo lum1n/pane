@@ -154,7 +154,7 @@ Commands that take a workspace accept `NAME` (on the focused display) or `DISPLA
 
 ## Menu bar icon
 
-The icon draws every display in its arrangement with the visible workspace's tiles inside it; the focused tile is solid, dots under a display count its hidden workspaces with windows, and a bar marks the focused display. With `menu_bar_app_icons = true` (the default; **Settings > General > Menu bar**) each tile big enough for one shows its app's icon, and the icon is drawn in colour instead of as a monochrome template.
+The icon draws every display in its arrangement with the visible workspace's tiles inside it; the focused tile is solid, dots under a display count its hidden workspaces with windows, and a bar marks the focused display. With `menu_bar_app_icons = true` (the default; **Settings > General > Menu Bar**) each tile big enough for one shows its app's icon, and the icon is drawn in colour instead of as a monochrome template.
 
 Click a window's tile to focus that window (the same as `focus-window ID`). Clicking anywhere else, on the focused tile, or with the right button or Control opens the menu.
 

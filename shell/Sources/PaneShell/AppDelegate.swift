@@ -7,7 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusMenu = StatusMenu()
     private let events = SystemEvents()
     private var editor: ProfileEditorWindow?
-    private var settingsWindow: NSWindow?
+    private var settings: SettingsWindowController?
     private var shownAxPrompt = false
     private var appearanceObservation: NSKeyValueObservation?
 
@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             if let t = StatusIconRenderer.tile(at: point, in: s), let wid = t.wid, !t.focused {
                 if case let .error(m) = PaneCore.shared.send(["cmd": "focus-window", "wid": Int(wid)]) {
-                    NoticeHUD.shared.show(m)
+                    NoticeHUD.shared.show(m, symbol: NoticeHUD.errorSymbol)
                 }
                 return
             }
@@ -160,16 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showSettings() {
-        if settingsWindow == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
-            w.title = "Pane Settings"
-            w.styleMask = [.titled, .closable]
-            w.setContentSize(NSSize(width: 620, height: 640))
-            w.isReleasedWhenClosed = false
-            settingsWindow = w
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.center()
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        if settings == nil { settings = SettingsWindowController() }
+        settings?.show()
     }
 }
